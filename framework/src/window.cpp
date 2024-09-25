@@ -390,7 +390,7 @@ glm::vec2 Window::getCursorPixel() const
 void Window::setMouseCapture(bool capture)
 {
     if (capture) {
-        glfwSetInputMode(m_pWindow, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        glfwSetInputMode(m_pWindow, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
     } else {
         glfwSetInputMode(m_pWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     }
