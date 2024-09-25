@@ -51,11 +51,36 @@ int main()
 
         // GUI
         if (show_gui) {
-            ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(300, window.getWindowSize().y), ImGuiCond_Always);
+
+            // Main menu
+            ImGui::BeginMainMenuBar();
+            if (ImGui::MenuItem("New")) {
+                // TODO
+            }
+            if (ImGui::MenuItem("Load")) {
+                // TODO
+            }
+            if (ImGui::MenuItem("Save")) {
+                // TODO
+            }
+
+            // Print canvas dimensions on the right-hand side of the menu bar
+            const std::string canvas_size_str = std::to_string(canvas_size.x) + "x" + std::to_string(canvas_size.y);
+            const char* canvas_size_cstr = canvas_size_str.c_str();
+            const int canvas_size_str_width = ImGui::CalcTextSize(canvas_size_cstr).x;
+            ImGui::SetCursorPosX(ImGui::GetWindowWidth() - canvas_size_str_width - 8);
+            ImGui::Text(canvas_size_cstr);
+
+            const int main_menu_height = ImGui::GetWindowHeight();
+            ImGui::EndMainMenuBar();
+
+            // Options
+            ImGui::SetNextWindowPos(ImVec2(-1, main_menu_height - 1), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(300, window.getWindowSize().y - main_menu_height + 2), ImGuiCond_Always);
             ImGui::Begin("", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
             {
-
+                ImGui::Text("Brush");
+                ImGui::SliderInt("Size", &brush_size, 1, 50);
             }
         }
 
