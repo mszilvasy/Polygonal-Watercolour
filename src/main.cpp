@@ -20,9 +20,10 @@ int main()
     glm::ivec2 canvas_pos { (workspace_size - canvas_size) / 2 + workspace_offset };
     Window window { "Watercolour Painting", win_size, OpenGLVersion::GL2, true };
 
+    glm::vec3 brush_color = { 1.0f, 0.0f, 0.0f };
+    int brush_size = 10;
     bool ctrl = false;
     bool debug = false;
-    int brush_size = 10;
 
     glm::vec2 cursor_pos;
     bool stroke = false;
@@ -40,6 +41,14 @@ int main()
     // Helpers
     auto point_in_canvas = [&](const glm::vec2& point) {
         return point.x >= canvas_pos.x && point.x <= canvas_pos.x + canvas_size.x && point.y >= canvas_pos.y && point.y <= canvas_pos.y + canvas_size.y;
+    };
+
+    auto point_to_canvas = [&](const glm::ivec2& point) {
+        return point - canvas_pos;
+    };
+
+    auto canvas_to_point = [&](const glm::ivec2& point) {
+        return point + canvas_pos;
     };
 
     // Callbacks
@@ -85,10 +94,13 @@ int main()
         if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
             stroke = true;
             stroke_length = 0;
-            live_splats.push_back(Splat(cursor_pos, brush_size, ++stroke_id)); // TODO: use stamps instead of splats
+            if (point_in_canvas(cursor_pos))
+                live_splats.push_back(Splat(point_to_canvas(cursor_pos), brush_color, brush_size, stroke_id)); // TODO: use stamps instead of splats
             undone_splats.clear();
-        } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE)
+        } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
             stroke = false;
+            stroke_id++;
+        }
     });
 
     window.registerMouseMoveCallback([&](const glm::vec2& new_pos) {
@@ -104,7 +116,7 @@ int main()
                 for (int i = remaining; i < stroke_length; i += stamp_spacing) {
                     const glm::vec2 pos = cursor_pos + (float)i * dir;
                     if (point_in_canvas(pos))
-                        live_splats.push_back(Splat(pos, brush_size, stroke_id)); // TODO: use stamps instead of splats
+                        live_splats.push_back(Splat(point_to_canvas(pos), brush_color, brush_size, stroke_id)); // TODO: use stamps instead of splats
                 }
 
                 stroke_length %= stamp_spacing;
@@ -160,6 +172,8 @@ int main()
                 // Brush settings
                 ImGui::Text("Brush");
                 ImGui::SliderInt("Size", &brush_size, 1, 50);
+                ImGui::Separator();
+                ImGui::ColorPicker3("Colour", &brush_color.r);
 
                 // Debug info
                 if (debug) {
@@ -202,9 +216,9 @@ int main()
 
         // Draw splats
         for (const Splat& splat : live_splats) {
-            const glm::vec2 splat_pos = splat.pos;
+            const glm::vec2 splat_pos = canvas_to_point(splat.pos);
             const glm::vec4 splat_proj = proj * glm::vec4(splat_pos, 0.0f, 1.0f);
-            glColor4f(1.0f, 0.0f, 0.0f, 0.1f);
+            glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
             glBegin(GL_TRIANGLE_FAN);
             for (int i = 0; i < brush_fidelity; i++) {
                 const float angle = glm::radians(i * 360.0f / brush_fidelity);
