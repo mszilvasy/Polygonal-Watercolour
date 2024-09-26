@@ -7,6 +7,7 @@
 
 #include "splat.hpp"
 #include "canvas.hpp"
+#include "style.hpp"
 
 const glm::ivec2 workspace_offset { 300, 0 };
 const int brush_fidelity = 72; // Number of points in brush
@@ -123,6 +124,10 @@ int main()
         canvas.pos = (workspace_size - canvas.size) / 2 + workspace_offset;
     });
 
+    // ImGui setup
+    darkStyle();
+
+    // Main loop
     while (!window.shouldClose()) {
 
         window.updateInput();
