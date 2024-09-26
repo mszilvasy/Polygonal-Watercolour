@@ -10,8 +10,8 @@
 #include "style.hpp"
 
 const glm::ivec2 workspace_offset { 300, 0 };
+const float stamp_spacing = 5.0f; // Stroke length before a new stamp is placed
 const int brush_fidelity = 72; // Number of points in brush
-const int stamp_spacing = 5; // Stroke length before a new stamp is placed
 
 int main()
 {
@@ -29,12 +29,15 @@ int main()
     bool debug = false;
 
     glm::vec2 cursor_pos;
+    glm::vec2 last_stamp;
     bool stroke = false;
     int stroke_id = 0;
-    int stroke_length = 0;
 
     std::deque<Splat> live_splats = {};
     std::deque<Splat> undone_splats = {};
+
+    float time_step = 0.1f;
+    float time_accum = 0.0f;
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -82,9 +85,9 @@ int main()
         // Left mouse button is for drawing strokes
         if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
             stroke = true;
-            stroke_length = 0;
+            last_stamp = canvas.canvas_coords(cursor_pos);
             if (canvas.contains_point(cursor_pos))
-                live_splats.push_back(Splat(canvas.canvas_coords(cursor_pos), brush_color, brush_size, stroke_id)); // TODO: use stamps instead of splats
+                live_splats.push_back(Splat(last_stamp, brush_color, brush_size, stroke_id)); // TODO: use stamps instead of splats
             undone_splats.clear();
         } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
             stroke = false;
@@ -94,24 +97,18 @@ int main()
 
     window.registerMouseMoveCallback([&](const glm::vec2& new_pos) {
         if (stroke) {
-            // Update stroke length and place new stamps
-            const int remaining = stamp_spacing - stroke_length;
-            stroke_length += std::abs(new_pos.x - cursor_pos.x) + std::abs(new_pos.y - cursor_pos.y);
-            if (stroke_length >= stamp_spacing) {
-
-                const glm::vec2 dir = glm::normalize(new_pos - cursor_pos);
-
-                // Place stamps
-                for (int i = remaining; i < stroke_length; i += stamp_spacing) {
-                    const glm::vec2 pos = cursor_pos + (float)i * dir;
-                    if (canvas.contains_point(cursor_pos))
-                        live_splats.push_back(Splat(canvas.canvas_coords(pos), brush_color, brush_size, stroke_id)); // TODO: use stamps instead of splats
+            const glm::vec2 cur_pos = canvas.canvas_coords(new_pos);
+            const float dist = glm::distance(last_stamp, cur_pos);
+            // Place stamps where appropriate
+            if (dist >= stamp_spacing) {
+                const glm::vec2 dir = glm::normalize(glm::vec2(cur_pos - last_stamp));
+                for (float i = stamp_spacing; i <= dist; i += stamp_spacing) {
+                    last_stamp = last_stamp + stamp_spacing * dir;
+                    if (canvas.contains_canvas_point(last_stamp))
+                        live_splats.push_back(Splat(last_stamp, brush_color, brush_size, stroke_id)); // TODO: use stamps instead of splats
                 }
-
-                stroke_length %= stamp_spacing;
             }
         }
-
         cursor_pos = new_pos;
     });
 
@@ -127,8 +124,23 @@ int main()
     // ImGui setup
     darkStyle();
 
+    auto t = std::chrono::system_clock::now();
+    float fps = 0.0f;
+
     // Main loop
     while (!window.shouldClose()) {
+
+        // Calculate time delta
+        const auto new_t = std::chrono::system_clock::now();
+        const float dt = std::chrono::duration<float>(new_t - t).count();
+        time_accum += dt;
+        t = new_t;
+
+        // Time step
+        while (time_accum >= time_step) {
+            time_accum -= time_step;
+            fps = 1.0f / dt;
+        }
 
         window.updateInput();
 
@@ -170,8 +182,9 @@ int main()
                 // Debug info
                 if (debug) {
                     ImGui::Separator();
-                    ImGui::Text("Debug");
-                    ImGui::Text("Stroke length: %d", stroke_length);
+                    ImGui::Text("Debug (%d fps)", (int)fps);
+                    ImGui::Text("Live splats: %d", live_splats.size());
+                    ImGui::Text("Last stamp: (%f, %f)", last_stamp.x, last_stamp.y);
                 }
             }
         }
