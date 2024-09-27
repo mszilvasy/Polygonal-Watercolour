@@ -1,9 +1,9 @@
 struct Splat {
-    const glm::ivec2 pos;
+    const glm::vec2 pos;
     const glm::vec3 color;
     const int size, stroke_id;
     int age;
-    Splat(const glm::ivec2& pos, const glm::vec3& color, int size, int stroke_id)
+    Splat(const glm::vec2& pos, const glm::vec3& color, int size, int stroke_id)
         : pos(pos)
         , color(color)
         , size(size)

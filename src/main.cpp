@@ -1,12 +1,12 @@
+#include <deque>
 #include <framework/window.h>
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/glm.hpp>
 #include <imgui/imgui.h>
 #include <nativefiledialog/nfd.h>
-#include <deque>
 
-#include "splat.hpp"
 #include "canvas.hpp"
+#include "splat.hpp"
 #include "style.hpp"
 
 const glm::ivec2 workspace_offset { 300, 0 };
@@ -18,7 +18,7 @@ int main()
     glm::ivec2 win_size { 1300, 1000 };
     glm::ivec2 workspace_size { win_size.x - 300, win_size.y }; // The area where the canvas sits (leaving the GUI out)
     Window window { "Watercolour Painting", win_size, OpenGLVersion::GL2, true };
-    
+
     const glm::ivec2 canvas_size { 900, 600 };
     const glm::ivec2 canvas_pos { (workspace_size - canvas_size) / 2 + workspace_offset };
     Canvas canvas { canvas_pos, canvas_size };
@@ -31,6 +31,7 @@ int main()
     glm::vec2 cursor_pos;
     glm::vec2 last_stamp;
     bool stroke = false;
+    bool pan = false;
     int stroke_id = 0;
 
     std::deque<Splat> live_splats = {};
@@ -45,7 +46,6 @@ int main()
 
     // Callbacks
     window.registerKeyCallback([&](const int key, const int scancode, const int action, const int mods) {
-
         // Hold Ctrl
         if (key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL) {
             if (action == GLFW_PRESS)
@@ -82,20 +82,27 @@ int main()
     });
 
     window.registerMouseButtonCallback([&](const int button, const int action, const int mods) {
-        // Left mouse button is for drawing strokes
+        // Left mouse button draws strokes
         if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
             stroke = true;
             last_stamp = canvas.canvas_coords(cursor_pos);
-            if (canvas.contains_point(cursor_pos))
+            if (canvas.contains_canvas_point(last_stamp))
                 live_splats.push_back(Splat(last_stamp, brush_color, brush_size, stroke_id)); // TODO: use stamps instead of splats
             undone_splats.clear();
         } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
             stroke = false;
             stroke_id++;
         }
+
+        // Middle mouse button pans the canvas
+        if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS)
+            pan = true;
+        else if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_RELEASE)
+            pan = false;
     });
 
     window.registerMouseMoveCallback([&](const glm::vec2& new_pos) {
+        
         if (stroke) {
             const glm::vec2 cur_pos = canvas.canvas_coords(new_pos);
             const float dist = glm::distance(last_stamp, cur_pos);
@@ -109,6 +116,11 @@ int main()
                 }
             }
         }
+
+        if (pan)
+            // Pan the canvas
+            canvas.pos -= cursor_pos - new_pos;
+
         cursor_pos = new_pos;
     });
 
@@ -118,7 +130,18 @@ int main()
         workspace_size = win_size - workspace_offset;
 
         // Recenter the canvas
-        canvas.pos = (workspace_size - canvas.size) / 2 + workspace_offset;
+        canvas.pos = (glm::vec2(workspace_size) - canvas.zoom * canvas.size) / 2.0f + glm::vec2(workspace_offset);
+    });
+
+    window.registerScrollCallback([&](const glm::vec2& offset) {
+        // Increment zoom
+        const float change = offset.y > 0.0f ? 0.25f : -0.25f;
+        const float new_zoom = canvas.zoom + change;
+        if (new_zoom >= 0.25f && new_zoom <= 8.0f) {
+            const float scale = new_zoom / canvas.zoom;
+            canvas.zoom = new_zoom;
+            canvas.pos = (canvas.pos - cursor_pos) * scale + cursor_pos;
+        }
     });
 
     // ImGui setup
@@ -159,7 +182,7 @@ int main()
             }
 
             // Print canvas dimensions on the right-hand side of the menu bar
-            const std::string canvas_size_str = std::to_string(canvas.size.x) + "x" + std::to_string(canvas.size.y);
+            const std::string canvas_size_str = std::to_string((int)(100 * canvas.zoom)) + "%%   " + std::to_string((int)canvas.size.x) + "x" + std::to_string((int)canvas.size.y);
             const char* canvas_size_cstr = canvas_size_str.c_str();
             const int canvas_size_str_width = ImGui::CalcTextSize(canvas_size_cstr).x;
             ImGui::SetCursorPosX(ImGui::GetWindowWidth() - canvas_size_str_width - 8);
@@ -200,13 +223,11 @@ int main()
 
         // Draw splats
         for (const Splat& splat : live_splats) {
-            const glm::vec2 splat_pos = canvas.window_coords(splat.pos);
-            const glm::vec4 splat_proj = proj * glm::vec4(splat_pos, 0.0f, 1.0f);
             glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
             glBegin(GL_TRIANGLE_FAN);
             for (int i = 0; i < brush_fidelity; i++) {
                 const float angle = glm::radians(i * 360.0f / brush_fidelity);
-                const glm::vec2 point = canvas.clamp_point(glm::vec2(cos(angle) * splat.size, sin(angle) * splat.size) + splat_pos);
+                const glm::vec2 point = canvas.clamp_point(canvas.window_coords(glm::vec2(cos(angle) * splat.size, sin(angle) * splat.size) + splat.pos));
                 const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
                 glVertex2f(point_proj.x, point_proj.y);
             }
@@ -214,7 +235,7 @@ int main()
         }
 
         // Draw brush
-        if (canvas.contains_point(cursor_pos)) {
+        if (cursor_pos.x > workspace_offset.x && canvas.contains_point(cursor_pos)) {
 
             // Hide cursor
             window.setMouseCapture(true);
@@ -224,7 +245,7 @@ int main()
             glBegin(GL_LINE_LOOP);
             for (int i = 0; i < brush_fidelity; i++) {
                 const float angle = glm::radians(i * 360.0f / brush_fidelity);
-                const glm::vec2 point = canvas.clamp_point(glm::vec2(cos(angle) * brush_size, sin(angle) * brush_size) + cursor_pos);
+                const glm::vec2 point = canvas.clamp_point(glm::vec2(cos(angle) * canvas.zoom * brush_size, sin(angle) * canvas.zoom * brush_size) + cursor_pos);
                 const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
                 glVertex2f(point_proj.x, point_proj.y);
             }
