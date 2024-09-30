@@ -45,6 +45,7 @@ int main()
     float time_accum = 0.0f;
 
     glEnable(GL_BLEND);
+    glStencilFunc(GL_EQUAL, 1, 1);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glClearColor(0.27f, 0.27f, 0.27f, 1.0f);
 
@@ -106,7 +107,6 @@ int main()
     });
 
     window.registerMouseMoveCallback([&](const glm::vec2& new_pos) {
-        
         if (stroke) {
             const glm::vec2 cur_pos = canvas.canvas_coords(new_pos);
             const float dist = glm::distance(last_stamp, cur_pos);
@@ -237,18 +237,65 @@ int main()
 
         // Draw splats
         for (const Splat& splat : live_splats) {
-            glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
-            glBegin(GL_TRIANGLE_FAN);
-            const glm::vec2 center = canvas.window_coords(splat.pos);
-            const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
-            glVertex2f(center_proj.x, center_proj.y);
-            for (int i = 0; i <= splat.vertices.size(); i++) {
-                const int j = i % splat.vertices.size();
-                const glm::vec2 point = canvas.window_coords(splat.vertices[j].pos);
-                const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
-                glVertex2f(point_proj.x, point_proj.y);
+            if (debug) {
+                // Debug vertices
+                glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
+                glBegin(GL_TRIANGLE_FAN);
+                const glm::vec2 center = canvas.window_coords(splat.pos);
+                const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
+                glVertex2f(center_proj.x, center_proj.y);
+                for (int i = 0; i <= splat.vertices.size(); i++) {
+                    const int j = i % splat.vertices.size();
+                    const glm::vec2 point = canvas.window_coords(splat.vertices[j].pos);
+                    const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
+                    glVertex2f(point_proj.x, point_proj.y);
+                }
+                glEnd();
+            } else {
+                // Two pass stencil buffer approach
+                glEnable(GL_STENCIL_TEST);
+                float x_min = win_size.x, x_max = 0, y_min = win_size.y, y_max = 0; // Bounding box
+
+                // First pass: mask out color buffer, draw splat to stencil buffer
+                glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+                glStencilOp(GL_INVERT, GL_KEEP, GL_KEEP);
+                
+                glBegin(GL_TRIANGLE_FAN);
+                
+                const glm::vec2 center = canvas.window_coords(splat.pos);
+                const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
+                glVertex2f(center_proj.x, center_proj.y);
+                
+                for (int i = 0; i <= splat.vertices.size(); i++) {
+                    const int j = i % splat.vertices.size();
+                    const glm::vec2 point = canvas.window_coords(splat.vertices[j].pos);
+                    const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
+                    glVertex2f(point_proj.x, point_proj.y);
+                    
+                    // Update bounding box
+                    x_min = std::min(point_proj.x, x_min);
+                    x_max = std::max(point_proj.x, x_max);
+                    y_min = std::min(point_proj.y, y_min);
+                    y_max = std::max(point_proj.y, y_max);
+                }
+
+                glEnd();
+
+                // Second pass: draw quad to color buffer, clear stencil buffer
+                glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
+                glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+
+                // Draw quad around bounding box
+                glBegin(GL_QUADS);
+                glVertex2f(x_min, y_min);
+                glVertex2f(x_max, y_min);
+                glVertex2f(x_max, y_max);
+                glVertex2f(x_min, y_max);
+                glEnd();
+
+                glDisable(GL_STENCIL_TEST);
             }
-            glEnd();
         }
 
         // Draw brush
