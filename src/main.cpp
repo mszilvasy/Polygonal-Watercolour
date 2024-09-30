@@ -11,7 +11,6 @@
 
 const glm::ivec2 workspace_offset { 300, 0 };
 const float stamp_spacing = 5.0f; // Stroke length before a new stamp is placed
-const int brush_fidelity = 72; // Number of points in brush
 
 int main()
 {
@@ -25,6 +24,11 @@ int main()
 
     glm::vec3 brush_color = { 1.0f, 0.0f, 0.0f };
     int brush_size = 10;
+    float roughness = 1;
+    float flow = 1.0f;
+    int lifetime = 30;
+    int vertices = 25;
+
     bool ctrl = false;
     bool debug = false;
 
@@ -37,7 +41,7 @@ int main()
     std::deque<Splat> live_splats = {};
     std::deque<Splat> undone_splats = {};
 
-    float time_step = 0.1f;
+    float time_step = 0.025f;
     float time_accum = 0.0f;
 
     glEnable(GL_BLEND);
@@ -87,7 +91,7 @@ int main()
             stroke = true;
             last_stamp = canvas.canvas_coords(cursor_pos);
             if (canvas.contains_canvas_point(last_stamp))
-                live_splats.push_back(Splat(last_stamp, brush_color, brush_size, stroke_id)); // TODO: use stamps instead of splats
+                live_splats.push_back(Splat(last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
             undone_splats.clear();
         } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
             stroke = false;
@@ -112,7 +116,7 @@ int main()
                 for (float i = stamp_spacing; i <= dist; i += stamp_spacing) {
                     last_stamp = last_stamp + stamp_spacing * dir;
                     if (canvas.contains_canvas_point(last_stamp))
-                        live_splats.push_back(Splat(last_stamp, brush_color, brush_size, stroke_id)); // TODO: use stamps instead of splats
+                        live_splats.push_back(Splat(last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
                 }
             }
         }
@@ -163,6 +167,12 @@ int main()
         while (time_accum >= time_step) {
             time_accum -= time_step;
             fps = 1.0f / dt;
+
+            // Advect splats
+            for (auto it = live_splats.begin(); it != live_splats.end(); it++) {
+                if (it->life > 0)
+                    it->advect();
+            }
         }
 
         window.updateInput();
@@ -191,14 +201,18 @@ int main()
             const int main_menu_height = ImGui::GetWindowHeight();
             ImGui::EndMainMenuBar();
 
-            // Options
+            // Settings
             ImGui::SetNextWindowPos(ImVec2(-1, main_menu_height - 1), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(300, window.getWindowSize().y - main_menu_height + 2), ImGuiCond_Always);
-            ImGui::Begin("", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
             {
                 // Brush settings
                 ImGui::Text("Brush");
                 ImGui::SliderInt("Size", &brush_size, 1, 50);
+                ImGui::SliderFloat("Roughness", &roughness, 0.0f, 2.0f);
+                SliderPercent("Flow", &flow, 0.0f, 2.0f);
+                ImGui::SliderInt("Lifetime", &lifetime, 1, 100);
+                ImGui::SliderInt("Vertices", &vertices, 3, 50);
                 ImGui::Separator();
                 ImGui::ColorPicker3("Colour", &brush_color.r);
 
@@ -225,9 +239,12 @@ int main()
         for (const Splat& splat : live_splats) {
             glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
             glBegin(GL_TRIANGLE_FAN);
-            for (int i = 0; i < brush_fidelity; i++) {
-                const float angle = glm::radians(i * 360.0f / brush_fidelity);
-                const glm::vec2 point = canvas.clamp_point(canvas.window_coords(glm::vec2(cos(angle) * splat.size, sin(angle) * splat.size) + splat.pos));
+            const glm::vec2 center = canvas.window_coords(splat.pos);
+            const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
+            glVertex2f(center_proj.x, center_proj.y);
+            for (int i = 0; i <= splat.vertices.size(); i++) {
+                const int j = i % splat.vertices.size();
+                const glm::vec2 point = canvas.window_coords(splat.vertices[j].pos);
                 const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
                 glVertex2f(point_proj.x, point_proj.y);
             }
@@ -243,8 +260,8 @@ int main()
             // Draw a circle
             glColor4f(0.0f, 0.0f, 0.0f, stroke ? 0.8f : 0.6f);
             glBegin(GL_LINE_LOOP);
-            for (int i = 0; i < brush_fidelity; i++) {
-                const float angle = glm::radians(i * 360.0f / brush_fidelity);
+            for (int i = 0; i < vertices; i++) {
+                const float angle = i * 2.0f * glm::pi<float>() / vertices;
                 const glm::vec2 point = canvas.clamp_point(glm::vec2(cos(angle) * canvas.zoom * brush_size, sin(angle) * canvas.zoom * brush_size) + cursor_pos);
                 const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
                 glVertex2f(point_proj.x, point_proj.y);

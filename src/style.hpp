@@ -16,3 +16,11 @@ void darkStyle() {
     style.Colors[ImGuiCol_SliderGrab] = ImVec4(0.51f, 0.51f, 0.51f, 1.00f);
     style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);
 }
+
+// Helper to display a slider as a percentage
+void SliderPercent(const char* label, float* v, float v_min, float v_max)
+{
+    float percent = *v * 100.0f;
+    ImGui::SliderFloat(label, &percent, 100.0f * v_min, 100.0f * v_max, "%.0f%%");
+    *v = percent / 100.0f;
+}
