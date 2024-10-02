@@ -395,7 +395,7 @@ void Window::setMouseCapture(bool capture)
         glfwSetInputMode(m_pWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     }
 
-    glfwPollEvents();
+    //glfwPollEvents();
 }
 
 glm::ivec2 Window::getWindowSize() const

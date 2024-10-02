@@ -41,6 +41,12 @@ struct Canvas {
         return glm::clamp(point, pos, pos + zoom * size);
     }
 
+    // Clamp a point, given in canvas coordinates, to the canvas
+    glm::vec2 clamp_canvas_point(glm::vec2 point) const
+    {
+        return glm::clamp(point, glm::vec2(0.0f, 0.0f), glm::vec2(size.x - 0.0001f, size.y - 0.0001f));
+    }
+
     // Draw the canvas using a projection matrix proj with the given background color
     void draw(glm::mat4 proj, glm::vec4 color) const
     {

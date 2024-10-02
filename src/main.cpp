@@ -111,7 +111,7 @@ int main()
             // Place the first stamp
             last_stamp = canvas.canvas_coords(cursor_pos);
             if (canvas.contains_canvas_point(last_stamp))
-                live_splats.push_back(Splat(last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
+                live_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
             undone_splats.clear();
 
             // Bind wet map
@@ -119,7 +119,7 @@ int main()
             glViewport(0, 0, canvas.size.x, canvas.size.y);
             glColor3f(1.0f, 1.0f, 1.0f);
             const glm::mat4 proj = glm::ortho(0.0f, (float)canvas.size.x, 0.0f, (float)canvas.size.y, -1.0f, 1.0f);
-         
+
             // Update wet map
             glBegin(GL_TRIANGLE_FAN);
             for (int i = 0; i < vertices; i++) {
@@ -129,7 +129,7 @@ int main()
                 glVertex2f(point_proj.x, point_proj.y);
             }
             glEnd();
-         
+
             // Unbind wet map
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -181,7 +181,7 @@ int main()
                     if (std::fmod(i, stamp_spacing) == 0.0f) {
                         last_stamp = pos;
                         if (canvas.contains_canvas_point(last_stamp))
-                            live_splats.push_back(Splat(last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
+                            live_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
                     }
                 }
 
@@ -237,17 +237,22 @@ int main()
             time_accum -= time_step;
             fps = 1.0f / dt;
 
-            // Advect splats
-            for (auto it = live_splats.begin(); it != live_splats.end(); it++) {
-                if (it->life > 0)
-                    it->advect();
-            }
-
-            // Reduce wetness
             glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
             glViewport(0, 0, canvas.size.x, canvas.size.y);
 
-            glColor4f(0.0f, 0.0f, 0.0f, 0.01f);
+            // Advect splats
+            auto wet_map_data = new unsigned char[3 * canvas.size.x * canvas.size.y];
+            glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGB, GL_UNSIGNED_BYTE, wet_map_data);
+            for (auto it = live_splats.begin(); it != live_splats.end(); it++) {
+                if (it->life > 0)
+                    it->advect(canvas, wet_map_data);
+            }
+
+            // Reduce wetness
+            glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+            glBlendFunc(GL_ONE, GL_ONE);
+
+            glColor3f(0.01f, 0.01f, 0.01f);
             glBegin(GL_QUADS);
             glVertex2f(-1.0f, -1.0f);
             glVertex2f(1.0f, -1.0f);
@@ -256,6 +261,8 @@ int main()
             glEnd();
 
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glBlendEquation(GL_FUNC_ADD);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         }
 
         window.updateInput();

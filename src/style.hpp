@@ -1,5 +1,9 @@
 // Style setup for ImGui
-void darkStyle() {
+void darkStyle()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+
     ImGuiStyle& style = ImGui::GetStyle();
     style.ScrollbarRounding = 8.0f;
     style.GrabMinSize = 8.0f;
