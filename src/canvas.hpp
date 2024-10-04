@@ -63,14 +63,14 @@ struct Canvas {
     }
 
     // Draw a texture to the canvas
-    void draw_texture(glm::mat4 proj, GLuint texture) const
+    void draw_texture(glm::mat4 proj, GLuint texture, float alpha = 1.0f) const
     {
         const glm::vec4 canvas_lower_left = proj * glm::vec4(pos, 0.0f, 1.0f);
         const glm::vec4 canvas_upper_right = proj * glm::vec4(pos + zoom * size, 0.0f, 1.0f);
 
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, texture);
-        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        glColor4f(1.0f, 1.0f, 1.0f, alpha);
         glBegin(GL_QUADS);
         glTexCoord2f(0.0f, 0.0f);
         glVertex2f(canvas_lower_left.x, canvas_lower_left.y);

@@ -382,6 +382,7 @@ int main()
                 }
 
                 glEnd();
+
             } else {
                 // Two pass stencil buffer approach
                 glEnable(GL_STENCIL_TEST);
@@ -448,7 +449,6 @@ int main()
 
         canvas.draw_backdrop(proj);
         if (!display_wet_map) {
-
             // Draw the canvas texture
             canvas.draw_texture(proj, bg);
 
@@ -456,12 +456,18 @@ int main()
             std::for_each(fixed_splats.begin(), fixed_splats.end(), draw_splat);
             std::for_each(flowing_splats.begin(), flowing_splats.end(), draw_splat);
 
+            // Darkening effect of the wet map
+            glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            canvas.draw_texture(proj, wet_map, 0.05f);
+            glBlendEquation(GL_FUNC_ADD);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         } else
             canvas.draw_texture(proj, wet_map);
 
         // Draw brush
         if (cursor_pos.x > workspace_offset.x && canvas.contains_point(cursor_pos)) {
-
             // Hide cursor
             window.setMouseCapture(true);
 
@@ -475,6 +481,7 @@ int main()
                 glVertex2f(point_proj.x, point_proj.y);
             }
             glEnd();
+
         } else
             window.setMouseCapture(false);
 
