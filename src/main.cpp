@@ -11,6 +11,7 @@
 
 const glm::ivec2 workspace_offset { 300, 0 };
 const float stamp_spacing = 5.0f; // Stroke length before a new stamp is placed
+const int drying_time = 60;
 
 int main()
 {
@@ -26,7 +27,7 @@ int main()
     int brush_size = 10;
     float roughness = 1;
     float flow = 1.0f;
-    int lifetime = 30;
+    int lifetime = 60;
     int vertices = 25;
 
     bool ctrl = false;
@@ -39,15 +40,42 @@ int main()
     bool pan = false;
     int stroke_id = 0;
 
-    std::deque<Splat> live_splats = {};
+    std::deque<Splat> flowing_splats = {};
+    std::deque<Splat> fixed_splats = {};
     std::deque<Splat> undone_splats = {};
 
-    float time_step = 0.025f;
+    float time_step = 0.0167f; // Roughly corresponds to 60 fps
     float time_accum = 0.0f;
 
     glEnable(GL_BLEND);
     glStencilFunc(GL_EQUAL, 1, 1);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // Canvas texture
+    GLuint bg_fbo;
+    glGenFramebuffers(1, &bg_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, bg_fbo);
+
+    GLuint bg;
+    glGenTextures(1, &bg);
+    glBindTexture(GL_TEXTURE_2D, bg);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, canvas_size.x, canvas_size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    GLuint bg_stencil;
+    glGenRenderbuffers(1, &bg_stencil);
+    glBindRenderbuffer(GL_RENDERBUFFER, bg_stencil);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_STENCIL, canvas_size.x, canvas_size.y);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, bg_stencil);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bg, 0);
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+    glClearColor(0.9f, 0.9f, 0.9f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(0.27f, 0.27f, 0.27f, 1.0f);
 
     // Wet map
@@ -78,11 +106,15 @@ int main()
 
         // Ctrl+Z undoes the last stroke
         if (key == GLFW_KEY_Z && ctrl && action == GLFW_PRESS) {
-            if (live_splats.size() > 0) {
-                const int last_stroke_id = live_splats.back().stroke_id;
-                while (live_splats.size() > 0 && live_splats.back().stroke_id == last_stroke_id) {
-                    undone_splats.push_back(live_splats.back());
-                    live_splats.pop_back();
+            if (flowing_splats.size() > 0 || fixed_splats.size() > 0) {
+                const int last_stroke_id = flowing_splats.size() > 0 ? flowing_splats.back().stroke_id : fixed_splats.back().stroke_id;
+                while (flowing_splats.size() > 0 && flowing_splats.back().stroke_id == last_stroke_id) {
+                    undone_splats.push_back(flowing_splats.back());
+                    flowing_splats.pop_back();
+                }
+                while (fixed_splats.size() > 0 && fixed_splats.back().stroke_id == last_stroke_id) {
+                    undone_splats.push_back(fixed_splats.back());
+                    fixed_splats.pop_back();
                 }
             }
         }
@@ -92,7 +124,10 @@ int main()
             if (undone_splats.size() > 0) {
                 const int last_stroke_id = undone_splats.back().stroke_id;
                 while (undone_splats.size() > 0 && undone_splats.back().stroke_id == last_stroke_id) {
-                    live_splats.push_back(undone_splats.back());
+                    if (undone_splats.back().life > 0)
+                        flowing_splats.push_back(undone_splats.back());
+                    else
+                        fixed_splats.push_back(undone_splats.back());
                     undone_splats.pop_back();
                 }
             }
@@ -111,7 +146,7 @@ int main()
             // Place the first stamp
             last_stamp = canvas.canvas_coords(cursor_pos);
             if (canvas.contains_canvas_point(last_stamp))
-                live_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
+                flowing_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
             undone_splats.clear();
 
             // Bind wet map
@@ -181,7 +216,7 @@ int main()
                     if (std::fmod(i, stamp_spacing) == 0.0f) {
                         last_stamp = pos;
                         if (canvas.contains_canvas_point(last_stamp))
-                            live_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
+                            flowing_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
                     }
                 }
 
@@ -240,19 +275,27 @@ int main()
             glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
             glViewport(0, 0, canvas.size.x, canvas.size.y);
 
-            // Advect splats
+            // Advect flowing splats
             auto wet_map_data = new unsigned char[3 * canvas.size.x * canvas.size.y];
             glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGB, GL_UNSIGNED_BYTE, wet_map_data);
-            for (auto it = live_splats.begin(); it != live_splats.end(); it++) {
-                if (it->life > 0)
-                    it->advect(canvas, wet_map_data);
+            for (auto it = flowing_splats.begin(); it != flowing_splats.end(); it++)
+                it->advect(canvas, wet_map_data);
+
+            // Fix splats which have stopped flowing
+            while (flowing_splats.size() > 0 && flowing_splats.front().life <= 0) {
+                fixed_splats.push_back(flowing_splats.front());
+                flowing_splats.pop_front();
             }
+
+            // Age fixed splats
+            for (auto it = fixed_splats.begin(); it != fixed_splats.end(); it++)
+                it->life--;
 
             // Reduce wetness
             glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
             glBlendFunc(GL_ONE, GL_ONE);
 
-            glColor3f(0.01f, 0.01f, 0.01f);
+            glColor3b(1, 1, 1);
             glBegin(GL_QUADS);
             glVertex2f(-1.0f, -1.0f);
             glVertex2f(1.0f, -1.0f);
@@ -260,9 +303,9 @@ int main()
             glVertex2f(-1.0f, 1.0f);
             glEnd();
 
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glBlendEquation(GL_FUNC_ADD);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
         window.updateInput();
@@ -301,7 +344,7 @@ int main()
                 ImGui::SliderInt("Size", &brush_size, 1, 50);
                 ImGui::SliderFloat("Roughness", &roughness, 0.0f, 2.0f);
                 SliderPercent("Flow", &flow, 0.0f, 2.0f);
-                ImGui::SliderInt("Lifetime", &lifetime, 1, 100);
+                ImGui::SliderInt("Lifetime", &lifetime, 0, 300);
                 ImGui::SliderInt("Vertices", &vertices, 3, 50);
                 ImGui::Separator();
                 ImGui::ColorPicker3("Colour", &brush_color.r);
@@ -311,7 +354,7 @@ int main()
                     ImGui::Separator();
                     ImGui::Text("Debug (%d fps)", (int)fps);
                     ImGui::Text("Strokes: %d", stroke_id);
-                    ImGui::Text("Live splats: %d", live_splats.size());
+                    ImGui::Text("Live splats: %d", flowing_splats.size() + fixed_splats.size());
                     ImGui::Text("Last stamp: (%f, %f)", last_stamp.x, last_stamp.y);
                     ImGui::Checkbox("Wet map", &display_wet_map);
                 }
@@ -319,79 +362,102 @@ int main()
         }
 
         // Drawing logic
-        const glm::mat4 proj = glm::ortho(0.0f, (float)win_size.x, 0.0f, (float)win_size.y, -1.0f, 1.0f);
+        glm::mat4 proj;
 
-        glViewport(0, 0, win_size.x, win_size.y);
-        glClear(GL_COLOR_BUFFER_BIT);
+        const auto draw_splat = [&](const Splat& splat, bool draw_to_window = true) {
+            if (draw_to_window && debug) {
+                // Debug vertices
+                glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
+                glBegin(GL_TRIANGLE_FAN);
+
+                const glm::vec2 center = canvas.window_coords(splat.pos);
+                const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
+                glVertex2f(center_proj.x, center_proj.y);
+
+                for (int i = 0; i <= splat.vertices.size(); i++) {
+                    const int j = i % splat.vertices.size();
+                    const glm::vec2 point = canvas.window_coords(splat.vertices[j].pos);
+                    const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
+                    glVertex2f(point_proj.x, point_proj.y);
+                }
+
+                glEnd();
+            } else {
+                // Two pass stencil buffer approach
+                glEnable(GL_STENCIL_TEST);
+                float x_min = draw_to_window ? win_size.x : canvas.size.x, x_max = 0, y_min = draw_to_window ? win_size.y : canvas.size.y, y_max = 0; // Bounding box
+
+                // First pass: mask out color buffer, draw splat to stencil buffer
+                glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+                glStencilOp(GL_INVERT, GL_KEEP, GL_KEEP);
+
+                glBegin(GL_TRIANGLE_FAN);
+
+                const glm::vec2 center = draw_to_window ? canvas.window_coords(splat.pos) : splat.pos;
+                const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
+                glVertex2f(center_proj.x, center_proj.y);
+
+                for (int i = 0; i <= splat.vertices.size(); i++) {
+                    const int j = i % splat.vertices.size();
+                    const glm::vec2 point = draw_to_window ? canvas.window_coords(splat.vertices[j].pos) : splat.vertices[j].pos;
+                    const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
+                    glVertex2f(point_proj.x, point_proj.y);
+
+                    // Update bounding box
+                    x_min = std::min(point_proj.x, x_min);
+                    x_max = std::max(point_proj.x, x_max);
+                    y_min = std::min(point_proj.y, y_min);
+                    y_max = std::max(point_proj.y, y_max);
+                }
+
+                glEnd();
+
+                // Second pass: draw quad to color buffer, clear stencil buffer
+                glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
+                glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
+
+                // Draw quad around bounding box
+                glBegin(GL_QUADS);
+                glVertex2f(x_min, y_min);
+                glVertex2f(x_max, y_min);
+                glVertex2f(x_max, y_max);
+                glVertex2f(x_min, y_max);
+                glEnd();
+
+                glDisable(GL_STENCIL_TEST);
+            }
+        };
+
+        // Draw dried splats to the canvas texture
+        if (fixed_splats.size() > 0 && fixed_splats.front().life < -drying_time) {
+            glBindFramebuffer(GL_FRAMEBUFFER, bg_fbo);
+            glViewport(0, 0, canvas.size.x, canvas.size.y);
+            proj = glm::ortho(0.0f, (float)canvas.size.x, 0.0f, (float)canvas.size.y, -1.0f, 1.0f);
+            while (fixed_splats.size() > 0 && fixed_splats.front().life < -drying_time) {
+                draw_splat(fixed_splats.front(), false);
+                fixed_splats.pop_front();
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
 
         // Draw canvas
+        glViewport(0, 0, win_size.x, win_size.y);
+        glClear(GL_COLOR_BUFFER_BIT);
+        proj = glm::ortho(0.0f, (float)win_size.x, 0.0f, (float)win_size.y, -1.0f, 1.0f);
+
+        canvas.draw_backdrop(proj);
         if (!display_wet_map) {
-            canvas.draw(proj, glm::vec4(0.9f, 0.9f, 0.9f, 1.0f));
 
-            // Draw splats
-            for (const Splat& splat : live_splats) {
-                if (debug) {
-                    // Debug vertices
-                    glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
-                    glBegin(GL_TRIANGLE_FAN);
-                    const glm::vec2 center = canvas.window_coords(splat.pos);
-                    const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
-                    glVertex2f(center_proj.x, center_proj.y);
-                    for (int i = 0; i <= splat.vertices.size(); i++) {
-                        const int j = i % splat.vertices.size();
-                        const glm::vec2 point = canvas.window_coords(splat.vertices[j].pos);
-                        const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
-                        glVertex2f(point_proj.x, point_proj.y);
-                    }
-                    glEnd();
-                } else {
-                    // Two pass stencil buffer approach
-                    glEnable(GL_STENCIL_TEST);
-                    float x_min = win_size.x, x_max = 0, y_min = win_size.y, y_max = 0; // Bounding box
+            // Draw the canvas texture
+            canvas.draw_texture(proj, bg);
 
-                    // First pass: mask out color buffer, draw splat to stencil buffer
-                    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-                    glStencilOp(GL_INVERT, GL_KEEP, GL_KEEP);
+            // Draw "live" splats to the canvas
+            std::for_each(fixed_splats.begin(), fixed_splats.end(), draw_splat);
+            std::for_each(flowing_splats.begin(), flowing_splats.end(), draw_splat);
 
-                    glBegin(GL_TRIANGLE_FAN);
-
-                    const glm::vec2 center = canvas.window_coords(splat.pos);
-                    const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
-                    glVertex2f(center_proj.x, center_proj.y);
-
-                    for (int i = 0; i <= splat.vertices.size(); i++) {
-                        const int j = i % splat.vertices.size();
-                        const glm::vec2 point = canvas.window_coords(splat.vertices[j].pos);
-                        const glm::vec4 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
-                        glVertex2f(point_proj.x, point_proj.y);
-
-                        // Update bounding box
-                        x_min = std::min(point_proj.x, x_min);
-                        x_max = std::max(point_proj.x, x_max);
-                        y_min = std::min(point_proj.y, y_min);
-                        y_max = std::max(point_proj.y, y_max);
-                    }
-
-                    glEnd();
-
-                    // Second pass: draw quad to color buffer, clear stencil buffer
-                    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-                    glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
-                    glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
-
-                    // Draw quad around bounding box
-                    glBegin(GL_QUADS);
-                    glVertex2f(x_min, y_min);
-                    glVertex2f(x_max, y_min);
-                    glVertex2f(x_max, y_max);
-                    glVertex2f(x_min, y_max);
-                    glEnd();
-
-                    glDisable(GL_STENCIL_TEST);
-                }
-            }
         } else
-            canvas.draw(proj, wet_map);
+            canvas.draw_texture(proj, wet_map);
 
         // Draw brush
         if (cursor_pos.x > workspace_offset.x && canvas.contains_point(cursor_pos)) {

@@ -40,8 +40,8 @@ struct Splat {
         }
     }
 
-    // Advect each vertex and return true once the splat has dried
-    bool advect(const Canvas& canvas, unsigned char* wet_map)
+    // Advect each vertex and update the lifetime of the splat
+    void advect(const Canvas& canvas, unsigned char* wet_map)
     {
         // d = (1 - alpha) * b + alpha * (1 / U(1, 1 + r)) * v
         // x* = x_t + f * d + g + U(-r, r)
@@ -55,6 +55,6 @@ struct Splat {
                 it->pos = x_star;
         }
 
-        return --life <= 0;
+        life--;
     }
 };

@@ -47,51 +47,27 @@ struct Canvas {
         return glm::clamp(point, glm::vec2(0.0f, 0.0f), glm::vec2(size.x - 0.0001f, size.y - 0.0001f));
     }
 
-    // Draw the canvas using a projection matrix proj with the given background color
-    void draw(glm::mat4 proj, glm::vec4 color) const
+    // Draw backdrop effect
+    void draw_backdrop(glm::mat4 proj) const
     {
-        const glm::vec4 canvas_lower_left = proj * glm::vec4(pos, 0.0f, 1.0f);
-        const glm::vec4 canvas_upper_right = proj * glm::vec4(pos + zoom * size, 0.0f, 1.0f);
         const glm::vec4 backdrop_lower_left = proj * glm::vec4(pos + backdrop_offset, 0.0f, 1.0f);
         const glm::vec4 backdrop_upper_right = proj * glm::vec4(pos + zoom * size + backdrop_offset, 0.0f, 1.0f);
 
-        // Backdrop effect (purely aesthetic)
         glColor4f(backdrop_color.r, backdrop_color.g, backdrop_color.b, backdrop_color.a);
         glBegin(GL_QUADS);
         glVertex2f(backdrop_lower_left.x, backdrop_lower_left.y);
         glVertex2f(backdrop_upper_right.x, backdrop_lower_left.y);
         glVertex2f(backdrop_upper_right.x, backdrop_upper_right.y);
         glVertex2f(backdrop_lower_left.x, backdrop_upper_right.y);
-        glEnd();
-
-        // Canvas proper
-        glColor4f(color.r, color.g, color.b, color.a);
-        glBegin(GL_QUADS);
-        glVertex2f(canvas_lower_left.x, canvas_lower_left.y);
-        glVertex2f(canvas_upper_right.x, canvas_lower_left.y);
-        glVertex2f(canvas_upper_right.x, canvas_upper_right.y);
-        glVertex2f(canvas_lower_left.x, canvas_upper_right.y);
         glEnd();
     }
 
-    // Draw the canvas using a projection matrix proj with the given texture
-    void draw(glm::mat4 proj, GLuint texture) const
+    // Draw a texture to the canvas
+    void draw_texture(glm::mat4 proj, GLuint texture) const
     {
         const glm::vec4 canvas_lower_left = proj * glm::vec4(pos, 0.0f, 1.0f);
         const glm::vec4 canvas_upper_right = proj * glm::vec4(pos + zoom * size, 0.0f, 1.0f);
-        const glm::vec4 backdrop_lower_left = proj * glm::vec4(pos + backdrop_offset, 0.0f, 1.0f);
-        const glm::vec4 backdrop_upper_right = proj * glm::vec4(pos + zoom * size + backdrop_offset, 0.0f, 1.0f);
 
-        // Backdrop effect (purely aesthetic)
-        glColor4f(backdrop_color.r, backdrop_color.g, backdrop_color.b, backdrop_color.a);
-        glBegin(GL_QUADS);
-        glVertex2f(backdrop_lower_left.x, backdrop_lower_left.y);
-        glVertex2f(backdrop_upper_right.x, backdrop_lower_left.y);
-        glVertex2f(backdrop_upper_right.x, backdrop_upper_right.y);
-        glVertex2f(backdrop_lower_left.x, backdrop_upper_right.y);
-        glEnd();
-
-        // Canvas proper
         glEnable(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, texture);
         glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
