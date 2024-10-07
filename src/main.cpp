@@ -13,6 +13,8 @@ const glm::ivec2 workspace_offset { 300, 0 };
 const float stamp_spacing = 5.0f; // Stroke length before a new stamp is placed
 const int drying_time = 60;
 
+const std::vector<float> zoom_steps = { 0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f };
+
 int main()
 {
     glm::ivec2 win_size { 1300, 1000 };
@@ -22,6 +24,7 @@ int main()
     const glm::ivec2 canvas_size { 900, 600 };
     const glm::ivec2 canvas_pos { (workspace_size - canvas_size) / 2 + workspace_offset };
     Canvas canvas { canvas_pos, canvas_size };
+    int zoom_idx = 3;
 
     glm::vec3 brush_color = { 1.0f, 0.0f, 0.0f };
     int brush_size = 10;
@@ -32,6 +35,7 @@ int main()
 
     bool ctrl = false;
     bool debug = false;
+    bool show_wetness = true;
     bool display_wet_map = false;
 
     glm::vec2 cursor_pos;
@@ -94,6 +98,41 @@ int main()
     glDrawBuffer(GL_COLOR_ATTACHMENT0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+    // Actions
+    const auto undo = [&]() {
+        if (flowing_splats.size() > 0 || fixed_splats.size() > 0) {
+            const int last_stroke_id = flowing_splats.size() > 0 ? flowing_splats.back().stroke_id : fixed_splats.back().stroke_id;
+            while (flowing_splats.size() > 0 && flowing_splats.back().stroke_id == last_stroke_id) {
+                undone_splats.push_back(flowing_splats.back());
+                flowing_splats.pop_back();
+            }
+            while (fixed_splats.size() > 0 && fixed_splats.back().stroke_id == last_stroke_id) {
+                undone_splats.push_back(fixed_splats.back());
+                fixed_splats.pop_back();
+            }
+        }
+    };
+
+    const auto redo = [&]() {
+        if (undone_splats.size() > 0) {
+            const int last_stroke_id = undone_splats.back().stroke_id;
+            while (undone_splats.size() > 0 && undone_splats.back().stroke_id == last_stroke_id) {
+                if (undone_splats.back().life > 0)
+                    flowing_splats.push_back(undone_splats.back());
+                else
+                    fixed_splats.push_back(undone_splats.back());
+                undone_splats.pop_back();
+            }
+        }
+    };
+
+    const auto zoom = [&](const bool zoom_in, const glm::vec2& center) {
+        zoom_idx += zoom_in ? 1 : -1;
+        const float scale = zoom_steps[zoom_idx] / canvas.zoom;
+        canvas.zoom = zoom_steps[zoom_idx];
+        canvas.pos = (canvas.pos - center) * scale + center;
+    };
+
     // Callbacks
     window.registerKeyCallback([&](const int key, const int scancode, const int action, const int mods) {
         // Hold Ctrl
@@ -104,34 +143,13 @@ int main()
                 ctrl = false;
         }
 
-        // Ctrl+Z undoes the last stroke
-        if (key == GLFW_KEY_Z && ctrl && action == GLFW_PRESS) {
-            if (flowing_splats.size() > 0 || fixed_splats.size() > 0) {
-                const int last_stroke_id = flowing_splats.size() > 0 ? flowing_splats.back().stroke_id : fixed_splats.back().stroke_id;
-                while (flowing_splats.size() > 0 && flowing_splats.back().stroke_id == last_stroke_id) {
-                    undone_splats.push_back(flowing_splats.back());
-                    flowing_splats.pop_back();
-                }
-                while (fixed_splats.size() > 0 && fixed_splats.back().stroke_id == last_stroke_id) {
-                    undone_splats.push_back(fixed_splats.back());
-                    fixed_splats.pop_back();
-                }
-            }
-        }
+        // Ctrl+Z: Undo
+        if (key == GLFW_KEY_Z && ctrl && action == GLFW_PRESS)
+            undo();
 
-        // Ctrl+Y redoes the last undone stroke
-        if (key == GLFW_KEY_Y && ctrl && action == GLFW_PRESS) {
-            if (undone_splats.size() > 0) {
-                const int last_stroke_id = undone_splats.back().stroke_id;
-                while (undone_splats.size() > 0 && undone_splats.back().stroke_id == last_stroke_id) {
-                    if (undone_splats.back().life > 0)
-                        flowing_splats.push_back(undone_splats.back());
-                    else
-                        fixed_splats.push_back(undone_splats.back());
-                    undone_splats.pop_back();
-                }
-            }
-        }
+        // Ctrl+Y: Redo
+        if (key == GLFW_KEY_Y && ctrl && action == GLFW_PRESS)
+            redo();
 
         // Toggle debug info
         if (key == GLFW_KEY_D && action == GLFW_PRESS)
@@ -243,13 +261,9 @@ int main()
 
     window.registerScrollCallback([&](const glm::vec2& offset) {
         // Increment zoom
-        const float change = offset.y > 0.0f ? 0.25f : -0.25f;
-        const float new_zoom = canvas.zoom + change;
-        if (new_zoom >= 0.25f && new_zoom <= 8.0f) {
-            const float scale = new_zoom / canvas.zoom;
-            canvas.zoom = new_zoom;
-            canvas.pos = (canvas.pos - cursor_pos) * scale + cursor_pos;
-        }
+        bool zoom_in = offset.y > 0;
+        if (zoom_in && zoom_idx < zoom_steps.size() - 1 || !zoom_in && zoom_idx > 0)
+            zoom(zoom_in, cursor_pos);
     });
 
     // ImGui setup
@@ -314,14 +328,29 @@ int main()
         {
             // Main menu
             ImGui::BeginMainMenuBar();
-            if (ImGui::MenuItem("New")) {
+            if (ImGui::BeginMenu("File")) {
                 // TODO
             }
-            if (ImGui::MenuItem("Load")) {
-                // TODO
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", nullptr, flowing_splats.size() > 0 || fixed_splats.size() > 0))
+                    undo();
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", nullptr, undone_splats.size() > 0))
+                    redo();
+                ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Save")) {
-                // TODO
+            if (ImGui::BeginMenu("View")) {
+                if (ImGui::MenuItem("Centre canvas", nullptr, nullptr))
+                    canvas.pos = (glm::vec2(workspace_size) - canvas.zoom * canvas.size) / 2.0f + glm::vec2(workspace_offset);
+                if (ImGui::MenuItem("Zoom in", nullptr, nullptr, zoom_idx < zoom_steps.size() - 1))
+                    zoom(true, workspace_size / 2 + workspace_offset);
+                if (ImGui::MenuItem("Zoom out", nullptr, nullptr, zoom_idx > 0))
+                    zoom(false, workspace_size / 2 + workspace_offset);
+                ImGui::Separator();
+                ImGui::MenuItem("Show wetness", nullptr, &show_wetness);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Darkens the canvas where water is present");
+                ImGui::MenuItem("Debug", "D", &debug);
+                ImGui::EndMenu();
             }
 
             // Print canvas dimensions on the right-hand side of the menu bar
@@ -457,11 +486,13 @@ int main()
             std::for_each(flowing_splats.begin(), flowing_splats.end(), draw_splat);
 
             // Darkening effect of the wet map
-            glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
-            canvas.draw_texture(proj, wet_map, 0.05f);
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            if (show_wetness) {
+                glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+                canvas.draw_texture(proj, wet_map, 0.05f);
+                glBlendEquation(GL_FUNC_ADD);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            }
 
         } else
             canvas.draw_texture(proj, wet_map);
