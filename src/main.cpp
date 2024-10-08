@@ -38,6 +38,8 @@ int main()
     bool show_wetness = true;
     bool display_wet_map = false;
 
+    bool show_new_canvas_window = false;
+
     glm::vec2 cursor_pos;
     glm::vec2 last_stamp;
     bool stroke = false;
@@ -55,50 +57,68 @@ int main()
     glStencilFunc(GL_EQUAL, 1, 1);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Canvas texture
-    GLuint bg_fbo;
+    GLuint bg_fbo, bg;
     glGenFramebuffers(1, &bg_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, bg_fbo);
 
-    GLuint bg;
-    glGenTextures(1, &bg);
-    glBindTexture(GL_TEXTURE_2D, bg);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, canvas_size.x, canvas_size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    GLuint bg_stencil;
-    glGenRenderbuffers(1, &bg_stencil);
-    glBindRenderbuffer(GL_RENDERBUFFER, bg_stencil);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_STENCIL, canvas_size.x, canvas_size.y);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, bg_stencil);
-
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bg, 0);
-    glDrawBuffer(GL_COLOR_ATTACHMENT0);
-
-    glClearColor(0.9f, 0.9f, 0.9f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glClearColor(0.27f, 0.27f, 0.27f, 1.0f);
-
-    // Wet map
-    GLuint wet_map_fbo;
+    GLuint wet_map_fbo, wet_map;
     glGenFramebuffers(1, &wet_map_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
 
-    GLuint wet_map;
-    glGenTextures(1, &wet_map);
-    glBindTexture(GL_TEXTURE_2D, wet_map);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, canvas_size.x, canvas_size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    const auto generate_canvas = [&](const glm::vec3& bg_color) {
+        // Canvas texture
+        glBindFramebuffer(GL_FRAMEBUFFER, bg_fbo);
 
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, wet_map, 0);
-    glDrawBuffer(GL_COLOR_ATTACHMENT0);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glGenTextures(1, &bg);
+        glBindTexture(GL_TEXTURE_2D, bg);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, canvas.size.x, canvas.size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        GLuint bg_stencil;
+        glGenRenderbuffers(1, &bg_stencil);
+        glBindRenderbuffer(GL_RENDERBUFFER, bg_stencil);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_STENCIL, canvas.size.x, canvas.size.y);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, bg_stencil);
+
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bg, 0);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
+        glClearColor(bg_color.r, bg_color.g, bg_color.b, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glClearColor(0.27f, 0.27f, 0.27f, 1.0f);
+
+        // Wet map
+        glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
+
+        glGenTextures(1, &wet_map);
+        glBindTexture(GL_TEXTURE_2D, wet_map);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, canvas.size.x, canvas.size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, wet_map, 0);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    };
+
+    generate_canvas(glm::vec3(0.9f, 0.9f, 0.9f));
 
     // Actions
+    const auto new_canvas = [&](const glm::ivec2& new_size, const glm::vec3& bg_color) {
+        flowing_splats.clear();
+        fixed_splats.clear();
+        undone_splats.clear();
+        zoom_idx = 3;
+
+        canvas = Canvas((workspace_size - new_size) / 2 + workspace_offset, new_size);
+        generate_canvas(bg_color);
+    };
+
     const auto undo = [&]() {
         if (flowing_splats.size() > 0 || fixed_splats.size() > 0) {
             const int last_stroke_id = flowing_splats.size() > 0 ? flowing_splats.back().stroke_id : fixed_splats.back().stroke_id;
@@ -142,6 +162,10 @@ int main()
             else if (action == GLFW_RELEASE)
                 ctrl = false;
         }
+
+        // Ctrl+N: New canvas
+        if (key == GLFW_KEY_N && ctrl && action == GLFW_PRESS)
+            show_new_canvas_window = true;
 
         // Ctrl+Z: Undo
         if (key == GLFW_KEY_Z && ctrl && action == GLFW_PRESS)
@@ -329,7 +353,9 @@ int main()
             // Main menu
             ImGui::BeginMainMenuBar();
             if (ImGui::BeginMenu("File")) {
-                // TODO
+                if (ImGui::MenuItem("New", "Ctrl+N", nullptr))
+                    show_new_canvas_window = true;
+                ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
                 if (ImGui::MenuItem("Undo", "Ctrl+Z", nullptr, flowing_splats.size() > 0 || fixed_splats.size() > 0))
@@ -348,7 +374,7 @@ int main()
                 ImGui::Separator();
                 ImGui::MenuItem("Show wetness", nullptr, &show_wetness);
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Darkens the canvas where water is present");
+                    ImGui::SetTooltip("Darkens the canvas where there is water present");
                 ImGui::MenuItem("Debug", "D", &debug);
                 ImGui::EndMenu();
             }
@@ -366,7 +392,7 @@ int main()
             // Settings
             ImGui::SetNextWindowPos(ImVec2(-1, main_menu_height - 1), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(300, window.getWindowSize().y - main_menu_height + 2), ImGuiCond_Always);
-            ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+            ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoBringToFrontOnFocus);
             {
                 // Brush settings
                 ImGui::Text("Brush");
@@ -387,6 +413,35 @@ int main()
                     ImGui::Text("Last stamp: (%f, %f)", last_stamp.x, last_stamp.y);
                     ImGui::Checkbox("Wet map", &display_wet_map);
                 }
+            }
+
+            // New canvas window
+            if (show_new_canvas_window) {
+                ImGui::SetNextWindowPos(ImVec2(workspace_size.x / 2 + workspace_offset.x, workspace_size.y / 2), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+                ImGui::SetNextWindowSize(ImVec2(175, 0), ImGuiCond_Appearing);
+                ImGui::Begin("New canvas", &show_new_canvas_window, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+                {
+                    static int width = canvas.size.x;
+                    static int height = canvas.size.y;
+                    static glm::vec3 bg_color = { 0.9f, 0.9f, 0.9f };
+
+                    ImGui::InputInt("Width", &width);
+                    ImGui::InputInt("Height", &height);
+                    ImGui::ColorEdit3("", &bg_color.r);
+
+                    width = std::clamp(width, 1, 4000);
+                    height = std::clamp(height, 1, 4000);
+
+                    if (ImGui::Button("OK")) {
+                        new_canvas(glm::ivec2(width, height), bg_color);
+                        show_new_canvas_window = false;
+                    }
+
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel"))
+                        show_new_canvas_window = false;
+                }
+                ImGui::End();
             }
         }
 
@@ -498,7 +553,7 @@ int main()
             canvas.draw_texture(proj, wet_map);
 
         // Draw brush
-        if (cursor_pos.x > workspace_offset.x && canvas.contains_point(cursor_pos)) {
+        if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && canvas.contains_point(cursor_pos)) {
             // Hide cursor
             window.setMouseCapture(true);
 
