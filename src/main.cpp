@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <imgui/imgui.h>
 #include <nativefiledialog/nfd.h>
+#include <stb/stb_image_write.h>
 
 #include "canvas.hpp"
 #include "splat.hpp"
@@ -39,6 +40,7 @@ int main()
     bool display_wet_map = false;
 
     bool show_new_canvas_window = false;
+    bool show_save_canvas_window = false;
 
     glm::vec2 cursor_pos;
     glm::vec2 last_stamp;
@@ -119,6 +121,26 @@ int main()
         generate_canvas(bg_color);
     };
 
+    const auto save_canvas = [&]() {
+        nfdchar_t* p_out_path = nullptr;
+        nfdresult_t result = NFD_SaveDialog("png", nullptr, &p_out_path);
+        if (result == NFD_OKAY) {
+
+            std::filesystem::path out_path { p_out_path };
+            out_path.replace_extension(".png");
+
+            glBindFramebuffer(GL_FRAMEBUFFER, bg_fbo);
+            glViewport(0, 0, canvas.size.x, canvas.size.y);
+            auto bg_data = new unsigned char[3 * canvas.size.x * canvas.size.y];
+            for (int i = 0; i < canvas.size.y; i++) // The image data must be flipped vertically
+                glReadPixels(0, canvas.size.y - i - 1, canvas.size.x, 1, GL_RGB, GL_UNSIGNED_BYTE, bg_data + 3 * i * (int)canvas.size.x);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+            stbi_write_png(out_path.string().c_str(), canvas.size.x, canvas.size.y, 3, bg_data, 3 * canvas.size.x);
+        }
+        free(p_out_path);
+    };
+
     const auto undo = [&]() {
         if (flowing_splats.size() > 0 || fixed_splats.size() > 0) {
             const int last_stroke_id = flowing_splats.size() > 0 ? flowing_splats.back().stroke_id : fixed_splats.back().stroke_id;
@@ -166,6 +188,10 @@ int main()
         // Ctrl+N: New canvas
         if (key == GLFW_KEY_N && ctrl && action == GLFW_PRESS)
             show_new_canvas_window = true;
+
+        // Ctrl+S: Save canvas
+        if (key == GLFW_KEY_S && ctrl && action == GLFW_PRESS)
+            show_save_canvas_window = true;
 
         // Ctrl+Z: Undo
         if (key == GLFW_KEY_Z && ctrl && action == GLFW_PRESS)
@@ -355,6 +381,8 @@ int main()
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("New", "Ctrl+N", nullptr))
                     show_new_canvas_window = true;
+                if (ImGui::MenuItem("Save", "Ctrl+S", nullptr))
+                    show_save_canvas_window = true;
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
@@ -414,6 +442,7 @@ int main()
                     ImGui::Checkbox("Wet map", &display_wet_map);
                 }
             }
+            ImGui::End();
 
             // New canvas window
             if (show_new_canvas_window) {
@@ -442,6 +471,26 @@ int main()
                         show_new_canvas_window = false;
                 }
                 ImGui::End();
+            }
+
+            // Save canvas window
+            if (show_save_canvas_window) {
+                if (flowing_splats.size() + fixed_splats.size() == 0) {
+                    show_save_canvas_window = false;
+                    save_canvas();
+                } else {
+                    ImGui::SetNextWindowPos(ImVec2(workspace_size.x / 2 + workspace_offset.x, workspace_size.y / 2), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+                    ImGui::SetNextWindowSize(ImVec2(0, 0), ImGuiCond_Appearing);
+                    ImGui::Begin("Save canvas", &show_save_canvas_window, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+                    {
+                        ImGui::Text("Waiting for paint to dry...");
+                        ImGui::Text("Remaining splats: %d", flowing_splats.size() + fixed_splats.size());
+
+                        if (ImGui::Button("Cancel"))
+                            show_save_canvas_window = false;
+                    }
+                    ImGui::End();
+                }
             }
         }
 
