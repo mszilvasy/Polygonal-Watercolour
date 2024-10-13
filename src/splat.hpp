@@ -51,7 +51,7 @@ struct Splat {
             const glm::vec2 d = (1.0f - alpha) * bias + alpha * (1.0f / U(1.0f, 1.0f + roughness)) * it->vel;
             const glm::vec2 x_star = canvas.clamp_canvas_point(it->pos + flow * d + g + glm::vec2(U(-roughness, roughness), U(-roughness, roughness)));
             const glm::ivec2 x_star_i = glm::ivec2(x_star);
-            if (wet_map[3 * ((int)canvas.size.x * x_star_i.y + x_star_i.x)] > 0)
+            if (wet_map[4 * ((int)canvas.size.x * x_star_i.y + x_star_i.x) + 3] > 0)
                 it->pos = x_star;
         }
 

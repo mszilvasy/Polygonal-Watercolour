@@ -4,11 +4,13 @@ const glm::vec2 backdrop_offset { 4.0f, -4.0f };
 struct Canvas {
 
     glm::vec2 pos, size;
+    glm::mat4 proj;
     float zoom = 1.0f;
     Canvas(glm::vec2 pos, glm::vec2 size)
         : pos(pos)
         , size(size)
     {
+        proj = glm::ortho(0.0f, size.x, 0.0f, size.y, -1.0f, 1.0f);
     }
 
     // Return true iff a point is inside the canvas

@@ -51,6 +51,7 @@ int main()
     glm::vec2 cursor_pos;
     glm::vec2 last_stamp;
     bool stroke = false;
+    bool wetting = false;
     bool pan = false;
     int stroke_id = 0;
 
@@ -96,15 +97,12 @@ int main()
         glClearColor(bg_color.r, bg_color.g, bg_color.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glClearColor(0.27f, 0.27f, 0.27f, 1.0f);
-
         // Wet map
         glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
 
         glGenTextures(1, &wet_map);
         glBindTexture(GL_TEXTURE_2D, wet_map);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, canvas.size.x, canvas.size.y, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, canvas.size.x, canvas.size.y, 0, GL_RGBA, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -112,7 +110,9 @@ int main()
 
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, wet_map, 0);
         glDrawBuffer(GL_COLOR_ATTACHMENT0);
+
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glClearColor(0.27f, 0.27f, 0.27f, 1.0f);
     };
 
     generate_canvas(glm::vec3(0.9f, 0.9f, 0.9f));
@@ -182,6 +182,19 @@ int main()
         canvas.pos = (canvas.pos - center) * scale + center;
     };
 
+    const auto add_water = [&](const glm::vec2& pos) {
+        glBegin(GL_TRIANGLE_FAN);
+        for (int i = 0; i < vertices; i++) {
+            const float angle = i * 2.0f * glm::pi<float>() / vertices;
+            const glm::vec2 dir = glm::vec2(std::cos(angle), std::sin(angle));
+            const glm::vec2 point = pos + (float)brush_size * dir;
+            const glm::vec2 point_proj = canvas.proj * glm::vec4(point, 0.0f, 1.0f);
+            glColor4f(dir.x, dir.y, 0.0f, 1.0f);
+            glVertex2f(point_proj.x, point_proj.y);
+        }
+        glEnd();
+    };
+
     // Callbacks
     window.registerKeyCallback([&](const int key, const int scancode, const int action, const int mods) {
         // Hold Ctrl
@@ -215,48 +228,66 @@ int main()
 
     window.registerMouseButtonCallback([&](const int button, const int action, const int mods) {
         // Left mouse button draws strokes
-        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
-            stroke = true;
+        if (button == GLFW_MOUSE_BUTTON_LEFT) {
+            if (action == GLFW_PRESS) {
+                stroke = true;
+                wetting = false;
 
-            // Place the first stamp
-            last_stamp = canvas.canvas_coords(cursor_pos);
-            if (canvas.contains_canvas_point(last_stamp))
-                flowing_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
-            undone_splats.clear();
+                // Place the first stamp
+                last_stamp = canvas.canvas_coords(cursor_pos);
+                if (canvas.contains_canvas_point(last_stamp))
+                    flowing_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
+                undone_splats.clear();
 
-            // Bind wet map
-            glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
-            glViewport(0, 0, canvas.size.x, canvas.size.y);
-            glColor3f(1.0f, 1.0f, 1.0f);
-            const glm::mat4 proj = glm::ortho(0.0f, (float)canvas.size.x, 0.0f, (float)canvas.size.y, -1.0f, 1.0f);
+                // Bind wet map
+                glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
+                glViewport(0, 0, canvas.size.x, canvas.size.y);
 
-            // Update wet map
-            glBegin(GL_TRIANGLE_FAN);
-            for (int i = 0; i < vertices; i++) {
-                const float angle = i * 2.0f * glm::pi<float>() / vertices;
-                const glm::vec2 point = last_stamp + (float)brush_size * glm::vec2(std::cos(angle), std::sin(angle));
-                const glm::vec2 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
-                glVertex2f(point_proj.x, point_proj.y);
+                // Update wet map
+                add_water(last_stamp);
+
+                // Unbind wet map
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+            } else if (action == GLFW_RELEASE) {
+                stroke = false;
+                stroke_id++;
             }
-            glEnd();
+        }
 
-            // Unbind wet map
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        // Right mouse button adds water (without adding stamps)
+        if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+            if (action == GLFW_PRESS) {
+                wetting = true;
+                stroke = false;
 
-        } else if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
-            stroke = false;
-            stroke_id++;
+                last_stamp = canvas.canvas_coords(cursor_pos);
+
+                // Bind wet map
+                glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
+                glViewport(0, 0, canvas.size.x, canvas.size.y);
+
+                // Update wet map
+                add_water(last_stamp);
+
+                // Unbind wet map
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            } else if (action == GLFW_RELEASE) {
+                wetting = false;
+            }
         }
 
         // Middle mouse button pans the canvas
-        if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS)
-            pan = true;
-        else if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_RELEASE)
-            pan = false;
+        if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+            if (action == GLFW_PRESS)
+                pan = true;
+            else if (action == GLFW_RELEASE)
+                pan = false;
+        }
     });
 
     window.registerMouseMoveCallback([&](const glm::vec2& new_pos) {
-        if (stroke) {
+        if (stroke || wetting) {
 
             const glm::vec2 cur_pos = canvas.canvas_coords(new_pos);
             const float dist = glm::distance(last_stamp, cur_pos);
@@ -267,8 +298,6 @@ int main()
                 // Bind wet map
                 glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
                 glViewport(0, 0, canvas.size.x, canvas.size.y);
-                glColor3f(1.0f, 1.0f, 1.0f);
-                const glm::mat4 proj = glm::ortho(0.0f, (float)canvas.size.x, 0.0f, (float)canvas.size.y, -1.0f, 1.0f);
 
                 const glm::vec2 dir = glm::normalize(glm::vec2(cur_pos - last_stamp));
                 glm::vec2 pos = last_stamp;
@@ -278,19 +307,12 @@ int main()
                     pos += dir;
 
                     // Update wet map
-                    glBegin(GL_TRIANGLE_FAN);
-                    for (int j = 0; j < vertices; j++) {
-                        const float angle = j * 2.0f * glm::pi<float>() / vertices;
-                        const glm::vec2 point = pos + (float)brush_size * glm::vec2(std::cos(angle), std::sin(angle));
-                        const glm::vec2 point_proj = proj * glm::vec4(point, 0.0f, 1.0f);
-                        glVertex2f(point_proj.x, point_proj.y);
-                    }
-                    glEnd();
+                    add_water(pos);
 
                     // Place stamp
                     if (std::fmod(i, stamp_spacing) == 0.0f) {
                         last_stamp = pos;
-                        if (canvas.contains_canvas_point(last_stamp))
+                        if (stroke && canvas.contains_canvas_point(last_stamp))
                             flowing_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
                     }
                 }
@@ -347,8 +369,8 @@ int main()
             glViewport(0, 0, canvas.size.x, canvas.size.y);
 
             // Advect flowing splats
-            auto wet_map_data = new unsigned char[3 * canvas.size.x * canvas.size.y];
-            glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGB, GL_UNSIGNED_BYTE, wet_map_data);
+            auto wet_map_data = new unsigned char[4 * canvas.size.x * canvas.size.y];
+            glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGBA, GL_UNSIGNED_BYTE, wet_map_data);
             for (auto it = flowing_splats.begin(); it != flowing_splats.end(); it++)
                 it->advect(canvas, wet_map_data);
 
@@ -366,7 +388,7 @@ int main()
             glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
             glBlendFunc(GL_ONE, GL_ONE);
 
-            glColor3b(1, 1, 1);
+            glColor4f(0.0f, 0.0f, 0.0f, 0.005f);
             glBegin(GL_QUADS);
             glVertex2f(-1.0f, -1.0f);
             glVertex2f(1.0f, -1.0f);
@@ -570,7 +592,7 @@ int main()
         if (fixed_splats.size() > 0 && fixed_splats.front().life < -drying_time) {
             glBindFramebuffer(GL_FRAMEBUFFER, bg_fbo);
             glViewport(0, 0, canvas.size.x, canvas.size.y);
-            proj = glm::ortho(0.0f, (float)canvas.size.x, 0.0f, (float)canvas.size.y, -1.0f, 1.0f);
+            proj = canvas.proj;
             while (fixed_splats.size() > 0 && fixed_splats.front().life < -drying_time) {
                 draw_splat(fixed_splats.front(), false);
                 fixed_splats.pop_front();
@@ -599,10 +621,8 @@ int main()
 
             // Darkening effect of the wet map
             if (show_wetness) {
-                glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+                glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_ALPHA);
                 canvas.draw_texture(proj, wet_map, 0.05f);
-                glBlendEquation(GL_FUNC_ADD);
                 glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             }
 
