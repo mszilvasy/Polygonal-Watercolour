@@ -16,6 +16,12 @@ const int drying_time = 60;
 
 const std::vector<float> zoom_steps = { 0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f };
 
+enum class DebugMode {
+    Fill,
+    Points,
+    Wetness
+};
+
 int main()
 {
     glm::ivec2 win_size { 1300, 1000 };
@@ -37,7 +43,7 @@ int main()
     bool ctrl = false;
     bool debug = false;
     bool show_wetness = true;
-    bool display_wet_map = false;
+    DebugMode debug_mode = DebugMode::Fill;
 
     bool show_new_canvas_window = false;
     bool show_save_canvas_window = false;
@@ -58,6 +64,7 @@ int main()
     glEnable(GL_BLEND);
     glStencilFunc(GL_EQUAL, 1, 1);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glPointSize(5.0f);
 
     GLuint bg_fbo, bg;
     glGenFramebuffers(1, &bg_fbo);
@@ -436,10 +443,14 @@ int main()
                 if (debug) {
                     ImGui::Separator();
                     ImGui::Text("Debug (%d fps)", (int)fps);
+                    ImGui::RadioButton("Fill", (int*)&debug_mode, (int)DebugMode::Fill);
+                    ImGui::SameLine();
+                    ImGui::RadioButton("Points", (int*)&debug_mode, (int)DebugMode::Points);
+                    ImGui::SameLine();
+                    ImGui::RadioButton("Wet map", (int*)&debug_mode, (int)DebugMode::Wetness);
                     ImGui::Text("Strokes: %d", stroke_id);
                     ImGui::Text("Live splats: %d", flowing_splats.size() + fixed_splats.size());
                     ImGui::Text("Last stamp: (%f, %f)", last_stamp.x, last_stamp.y);
-                    ImGui::Checkbox("Wet map", &display_wet_map);
                 }
             }
             ImGui::End();
@@ -503,10 +514,6 @@ int main()
                 glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
                 glBegin(GL_TRIANGLE_FAN);
 
-                const glm::vec2 center = canvas.window_coords(splat.pos);
-                const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
-                glVertex2f(center_proj.x, center_proj.y);
-
                 for (int i = 0; i <= splat.vertices.size(); i++) {
                     const int j = i % splat.vertices.size();
                     const glm::vec2 point = canvas.window_coords(splat.vertices[j].pos);
@@ -523,13 +530,9 @@ int main()
 
                 // First pass: mask out color buffer, draw splat to stencil buffer
                 glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-                glStencilOp(GL_INVERT, GL_KEEP, GL_KEEP);
+                glStencilOp(GL_INVERT, GL_INVERT, GL_INVERT);
 
                 glBegin(GL_TRIANGLE_FAN);
-
-                const glm::vec2 center = draw_to_window ? canvas.window_coords(splat.pos) : splat.pos;
-                const glm::vec4 center_proj = proj * glm::vec4(center, 0.0f, 1.0f);
-                glVertex2f(center_proj.x, center_proj.y);
 
                 for (int i = 0; i <= splat.vertices.size(); i++) {
                     const int j = i % splat.vertices.size();
@@ -581,13 +584,18 @@ int main()
         proj = glm::ortho(0.0f, (float)win_size.x, 0.0f, (float)win_size.y, -1.0f, 1.0f);
 
         canvas.draw_backdrop(proj);
-        if (!display_wet_map) {
+        if (!debug || debug_mode != DebugMode::Wetness) {
             // Draw the canvas texture
             canvas.draw_texture(proj, bg);
 
             // Draw "live" splats to the canvas
+            if (debug && debug_mode == DebugMode::Points)
+                glPolygonMode(GL_FRONT_AND_BACK, GL_POINT);
+
             std::for_each(fixed_splats.begin(), fixed_splats.end(), draw_splat);
             std::for_each(flowing_splats.begin(), flowing_splats.end(), draw_splat);
+
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
             // Darkening effect of the wet map
             if (show_wetness) {
