@@ -12,7 +12,7 @@
 
 const glm::ivec2 workspace_offset { 300, 0 };
 const float stamp_spacing = 5.0f; // Stroke length before a new stamp is placed
-const int drying_time = 60;
+const int drying_time = 600;
 
 const std::vector<float> zoom_steps = { 0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f };
 
@@ -55,8 +55,7 @@ int main()
     bool pan = false;
     int stroke_id = 0;
 
-    std::deque<Splat> flowing_splats = {};
-    std::deque<Splat> fixed_splats = {};
+    std::list<Splat> live_splats = {};
     std::deque<Splat> undone_splats = {};
 
     float time_step = 0.0167f; // Roughly corresponds to 60 fps
@@ -119,8 +118,7 @@ int main()
 
     // Actions
     const auto new_canvas = [&](const glm::ivec2& new_size, const glm::vec3& bg_color) {
-        flowing_splats.clear();
-        fixed_splats.clear();
+        live_splats.clear();
         undone_splats.clear();
         zoom_idx = 3;
 
@@ -149,15 +147,11 @@ int main()
     };
 
     const auto undo = [&]() {
-        if (flowing_splats.size() > 0 || fixed_splats.size() > 0) {
-            const int last_stroke_id = flowing_splats.size() > 0 ? flowing_splats.back().stroke_id : fixed_splats.back().stroke_id;
-            while (flowing_splats.size() > 0 && flowing_splats.back().stroke_id == last_stroke_id) {
-                undone_splats.push_back(flowing_splats.back());
-                flowing_splats.pop_back();
-            }
-            while (fixed_splats.size() > 0 && fixed_splats.back().stroke_id == last_stroke_id) {
-                undone_splats.push_back(fixed_splats.back());
-                fixed_splats.pop_back();
+        if (live_splats.size() > 0) {
+            const int last_stroke_id = live_splats.back().stroke_id;
+            while (live_splats.size() > 0 && live_splats.back().stroke_id == last_stroke_id) {
+                undone_splats.push_back(live_splats.back());
+                live_splats.pop_back();
             }
         }
     };
@@ -166,10 +160,7 @@ int main()
         if (undone_splats.size() > 0) {
             const int last_stroke_id = undone_splats.back().stroke_id;
             while (undone_splats.size() > 0 && undone_splats.back().stroke_id == last_stroke_id) {
-                if (undone_splats.back().life > 0)
-                    flowing_splats.push_back(undone_splats.back());
-                else
-                    fixed_splats.push_back(undone_splats.back());
+                live_splats.push_back(undone_splats.back());
                 undone_splats.pop_back();
             }
         }
@@ -236,7 +227,7 @@ int main()
                 // Place the first stamp
                 last_stamp = canvas.canvas_coords(cursor_pos);
                 if (canvas.contains_canvas_point(last_stamp))
-                    flowing_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
+                    live_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
                 undone_splats.clear();
 
                 // Bind wet map
@@ -313,7 +304,7 @@ int main()
                     if (std::fmod(i, stamp_spacing) == 0.0f) {
                         last_stamp = pos;
                         if (stroke && canvas.contains_canvas_point(last_stamp))
-                            flowing_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
+                            live_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
                     }
                 }
 
@@ -368,21 +359,16 @@ int main()
             glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
             glViewport(0, 0, canvas.size.x, canvas.size.y);
 
-            // Advect flowing splats
-            auto wet_map_data = new unsigned char[4 * canvas.size.x * canvas.size.y];
-            glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGBA, GL_UNSIGNED_BYTE, wet_map_data);
-            for (auto it = flowing_splats.begin(); it != flowing_splats.end(); it++)
-                it->advect(canvas, wet_map_data);
-
-            // Fix splats which have stopped flowing
-            while (flowing_splats.size() > 0 && flowing_splats.front().life <= 0) {
-                fixed_splats.push_back(flowing_splats.front());
-                flowing_splats.pop_front();
+            static auto wet_map_data = new float[4 * canvas.size.x * canvas.size.y];
+            glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGBA, GL_FLOAT, wet_map_data);
+            for (auto it = live_splats.begin(); it != live_splats.end(); it++) {
+                if (it->life > 0)
+                    // Advect flowing splats
+                    it->advect(canvas, wet_map_data);
+                else
+                    // Age fixed splats
+                    it->age(canvas, wet_map_data, lifetime);
             }
-
-            // Age fixed splats
-            for (auto it = fixed_splats.begin(); it != fixed_splats.end(); it++)
-                it->life--;
 
             // Reduce wetness
             glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
@@ -415,7 +401,7 @@ int main()
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
-                if (ImGui::MenuItem("Undo", "Ctrl+Z", nullptr, flowing_splats.size() > 0 || fixed_splats.size() > 0))
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", nullptr, live_splats.size() > 0))
                     undo();
                 if (ImGui::MenuItem("Redo", "Ctrl+Y", nullptr, undone_splats.size() > 0))
                     redo();
@@ -471,7 +457,7 @@ int main()
                     ImGui::SameLine();
                     ImGui::RadioButton("Wet map", (int*)&debug_mode, (int)DebugMode::Wetness);
                     ImGui::Text("Strokes: %d", stroke_id);
-                    ImGui::Text("Live splats: %d", flowing_splats.size() + fixed_splats.size());
+                    ImGui::Text("Live splats: %d", live_splats.size());
                     ImGui::Text("Last stamp: (%f, %f)", last_stamp.x, last_stamp.y);
                 }
             }
@@ -508,7 +494,7 @@ int main()
 
             // Save canvas window
             if (show_save_canvas_window) {
-                if (flowing_splats.size() + fixed_splats.size() == 0) {
+                if (live_splats.size() == 0) {
                     show_save_canvas_window = false;
                     save_canvas();
                 } else {
@@ -517,7 +503,7 @@ int main()
                     ImGui::Begin("Save canvas", &show_save_canvas_window, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
                     {
                         ImGui::Text("Waiting for paint to dry...");
-                        ImGui::Text("Remaining splats: %d", flowing_splats.size() + fixed_splats.size());
+                        ImGui::Text("Remaining splats: %d", live_splats.size());
 
                         if (ImGui::Button("Cancel"))
                             show_save_canvas_window = false;
@@ -589,14 +575,15 @@ int main()
         };
 
         // Draw dried splats to the canvas texture
-        if (fixed_splats.size() > 0 && fixed_splats.front().life < -drying_time) {
+        if (live_splats.size() > 0) {
             glBindFramebuffer(GL_FRAMEBUFFER, bg_fbo);
             glViewport(0, 0, canvas.size.x, canvas.size.y);
             proj = canvas.proj;
-            while (fixed_splats.size() > 0 && fixed_splats.front().life < -drying_time) {
-                draw_splat(fixed_splats.front(), false);
-                fixed_splats.pop_front();
-            }
+            for (auto it = live_splats.begin(); it != live_splats.end(); it++)
+                if (it->life < -drying_time) {
+                    draw_splat(*it, false);
+                    live_splats.erase(it);
+                }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
@@ -613,10 +600,7 @@ int main()
             // Draw "live" splats to the canvas
             if (debug && debug_mode == DebugMode::Points)
                 glPolygonMode(GL_FRONT_AND_BACK, GL_POINT);
-
-            std::for_each(fixed_splats.begin(), fixed_splats.end(), draw_splat);
-            std::for_each(flowing_splats.begin(), flowing_splats.end(), draw_splat);
-
+            std::for_each(live_splats.begin(), live_splats.end(), draw_splat);
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
             // Darkening effect of the wet map
@@ -648,7 +632,6 @@ int main()
         } else
             window.setMouseCapture(false);
 
-        ImGui::End();
         window.swapBuffers();
     }
 
