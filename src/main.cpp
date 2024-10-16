@@ -11,8 +11,6 @@
 #include "style.hpp"
 
 const glm::ivec2 workspace_offset { 300, 0 };
-const float stamp_spacing = 5.0f; // Stroke length before a new stamp is placed
-const int drying_time = 600;
 
 const std::vector<float> zoom_steps = { 0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f };
 
@@ -39,6 +37,10 @@ int main()
     float flow = 1.0f;
     int lifetime = 60;
     int vertices = 25;
+    
+    float unfixing_strength = 0.75f;
+    int stamp_spacing = 5.0f;
+    int drying_time = 600;
 
     bool ctrl = false;
     bool debug = false;
@@ -60,6 +62,8 @@ int main()
 
     float time_step = 0.0167f; // Roughly corresponds to 60 fps
     float time_accum = 0.0f;
+    int resample_period = 1;
+    int resample_counter = 0;
 
     glEnable(GL_BLEND);
     glStencilFunc(GL_EQUAL, 1, 1);
@@ -362,13 +366,17 @@ int main()
             static auto wet_map_data = new float[4 * canvas.size.x * canvas.size.y];
             glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGBA, GL_FLOAT, wet_map_data);
             for (auto it = live_splats.begin(); it != live_splats.end(); it++) {
-                if (it->life > 0)
+                if (it->life >= 0) {
                     // Advect flowing splats
-                    it->advect(canvas, wet_map_data);
-                else
+                    if ((it->advect(canvas, wet_map_data) || resample_counter == resample_period) && resample_period > 0)
+                        it->resample(); // Resample boundary periodically or when a splat becomes fixed
+                } else if (it->life >= -drying_time)
                     // Age fixed splats
-                    it->age(canvas, wet_map_data, lifetime);
+                    it->age(canvas, wet_map_data, lifetime, unfixing_strength);
             }
+
+            if (resample_period > 0)
+                resample_counter = resample_counter % resample_period + 1;
 
             // Reduce wetness
             glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
@@ -443,9 +451,17 @@ int main()
                 ImGui::SliderFloat("Roughness", &roughness, 0.0f, 2.0f);
                 SliderPercent("Flow", &flow, 0.0f, 2.0f);
                 ImGui::SliderInt("Lifetime", &lifetime, 0, 300);
-                ImGui::SliderInt("Vertices", &vertices, 3, 50);
+                ImGui::SliderInt("Vertices", &vertices, 6, 50);
                 ImGui::Separator();
                 ImGui::ColorPicker3("Colour", &brush_color.r);
+
+                // Simulation settings
+                ImGui::Separator();
+                ImGui::Text("Canvas");
+                ImGui::SliderInt("Stamp spacing", &stamp_spacing, 1, 10);
+                ImGui::SliderInt("Drying time", &drying_time, 0, 3600);
+                ImGui::SliderInt("Resampling period", &resample_period, 0, 60);
+                ImGui::SliderFloat("Unfixing strength", &unfixing_strength, 0.0f, 1.0f);
 
                 // Debug info
                 if (debug) {
@@ -575,15 +591,14 @@ int main()
         };
 
         // Draw dried splats to the canvas texture
-        if (live_splats.size() > 0) {
+        while (live_splats.size() > 0 && live_splats.front().life < -drying_time) {
             glBindFramebuffer(GL_FRAMEBUFFER, bg_fbo);
             glViewport(0, 0, canvas.size.x, canvas.size.y);
             proj = canvas.proj;
-            for (auto it = live_splats.begin(); it != live_splats.end(); it++)
-                if (it->life < -drying_time) {
-                    draw_splat(*it, false);
-                    live_splats.erase(it);
-                }
+            while (live_splats.size() > 0 && live_splats.front().life < -drying_time) {
+                draw_splat(live_splats.front(), false);
+                live_splats.pop_front();
+            }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 

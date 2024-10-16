@@ -17,7 +17,6 @@ struct Vertex {
 struct Splat {
 
     std::vector<Vertex> vertices;
-    const glm::vec2 pos;
     const glm::vec2 bias;
     const glm::vec3 color;
     const float size, roughness, flow;
@@ -25,8 +24,7 @@ struct Splat {
     int life;
 
     Splat(const Canvas& canvas, const glm::vec2& pos, const glm::vec3& color, float size, float roughness, float flow, int stroke_id, int lifetime, int n_vertices)
-        : pos(pos)
-        , color(color)
+        : color(color)
         , bias(glm::vec2(0.0f, 0.0f))
         , size(size)
         , roughness(roughness)
@@ -43,7 +41,7 @@ struct Splat {
     }
 
     // Advect each vertex and update the lifetime of the splat
-    void advect(const Canvas& canvas, float* wet_map)
+    bool advect(const Canvas& canvas, float* wet_map)
     {
         // d = (1 - alpha) * b + alpha * (1 / U(1, 1 + r)) * v
         // x* = x_t + f * d + g + U(-r, r)
@@ -68,23 +66,71 @@ struct Splat {
             }
         }
 
-        life--;
+        return life-- <= 0;
     }
 
     // If the splat has just been rewetted, reset its lifetime, otherwise age it
-    void age(const Canvas& canvas, float* wet_map, int new_lifetime, float unfixing_strength = 0.75f)
+    void age(const Canvas& canvas, float* wet_map, int new_lifetime, float unfixing_strength)
     {
         for (auto it = vertices.begin(); it != vertices.end(); it++)
             if (wet_map[4 * ((int)canvas.size.x * (int)it->pos.y + (int)it->pos.x) + 3] == 1.0f) {
-                life = new_lifetime - 1;
                 for (auto it = vertices.begin(); it != vertices.end(); it++) {
                     it->vel = glm::vec2(0.0f, 0.0f);
-                    it->rewetted = U(0.0f, 1.0f) < std::powf(unfixing_strength, -life);
+                    it->rewetted = U(0.0f, 1.0f) < std::powf(unfixing_strength, -life / 10.0f);
                     it->flowing = wet_map[4 * ((int)canvas.size.x * (int)it->pos.y + (int)it->pos.x) + 3] == 1.0f;
                 }
+                life = new_lifetime - 1;
                 return;
             }
 
         life--;
+    }
+
+    // Resample the splat's boundary
+    void resample()
+    {
+        // Calculate perimeter and arc length increment
+        const int n = vertices.size();
+        float perimeter = 0.0f;
+        for (int i = 0; i < n; i++)
+            perimeter += glm::distance(vertices[i].pos, vertices[(i + 1) % n].pos);
+        const float inc = perimeter / n;
+
+        std::vector<Vertex> new_vertices;
+        new_vertices.reserve(n);
+
+        // Resample vertices
+        float t = 0.0f;
+        int i = rand() % n;
+        for (int j = 0; j < n; j++) {
+
+            Vertex a = vertices[i];
+            Vertex b = vertices[(i + 1) % n];
+            glm::vec2 p = a.pos;
+            glm::vec2 q = b.pos;
+            float d = glm::distance(p, q);
+
+            while (t > d) {
+                t -= d;
+                i = (i + 1) % n;
+                a = vertices[i];
+                b = vertices[(i + 1) % n];
+                p = a.pos;
+                q = b.pos;
+                d = glm::distance(p, q);
+            }
+
+            // Add new vertex, interpolate its properties between a and b
+            const glm::vec2 r = p + t * glm::normalize(q - p);
+            const glm::vec2 v = glm::normalize(t * b.vel + (d - t) * a.vel);
+            const bool close = t < d - t;
+            const bool rewetted = close ? a.rewetted : b.rewetted;
+            const bool flowing = close ? a.flowing : b.flowing;
+            new_vertices.push_back({ r, v, rewetted, flowing });
+
+            t += inc;
+        }
+
+        vertices = new_vertices;
     }
 };
