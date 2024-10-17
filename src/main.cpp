@@ -29,6 +29,7 @@ int main()
     const glm::ivec2 canvas_size { 900, 600 };
     const glm::ivec2 canvas_pos { (workspace_size - canvas_size) / 2 + workspace_offset };
     Canvas canvas { canvas_pos, canvas_size };
+    auto wet_map_data = new float[4 * canvas.size.x * canvas.size.y];
     int zoom_idx = 3;
 
     glm::vec3 brush_color = { 1.0f, 0.0f, 0.0f };
@@ -128,6 +129,9 @@ int main()
 
         canvas = Canvas((workspace_size - new_size) / 2 + workspace_offset, new_size);
         generate_canvas(bg_color);
+
+        delete[] wet_map_data;
+        wet_map_data = new float[4 * canvas.size.x * canvas.size.y];
     };
 
     const auto save_canvas = [&]() {
@@ -363,7 +367,6 @@ int main()
             glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
             glViewport(0, 0, canvas.size.x, canvas.size.y);
 
-            static auto wet_map_data = new float[4 * canvas.size.x * canvas.size.y];
             glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGBA, GL_FLOAT, wet_map_data);
             for (auto it = live_splats.begin(); it != live_splats.end(); it++) {
                 if (it->life >= 0) {
