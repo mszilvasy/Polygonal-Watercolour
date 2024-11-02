@@ -8,6 +8,7 @@
 
 #include "canvas.hpp"
 #include "splat.hpp"
+#include "stamp.hpp"
 #include "style.hpp"
 
 const glm::ivec2 workspace_offset { 300, 0 };
@@ -32,6 +33,10 @@ int main()
     auto wet_map_data = new float[4 * canvas.size.x * canvas.size.y];
     int zoom_idx = 3;
 
+    const char* stamp_names_separated_by_zeros = "Simple/Crunchy\0Wet-on-Dry\0Wet-on-Wet\0Blobby";
+    std::vector<Stamp*> stamps = { new Crunchy, new WetOnDry, new WetOnWet, new Blobby };
+    int stamp_idx = 0;
+
     glm::vec3 brush_color = { 1.0f, 0.0f, 0.0f };
     int brush_size = 10;
     float roughness = 1;
@@ -39,7 +44,7 @@ int main()
     int lifetime = 60;
     int vertices = 25;
     
-    float unfixing_strength = 0.75f;
+    float unfixing_strength = 1.0f;
     int stamp_spacing = 5.0f;
     int drying_time = 600;
 
@@ -63,7 +68,7 @@ int main()
 
     float time_step = 0.0167f; // Roughly corresponds to 60 fps
     float time_accum = 0.0f;
-    int resample_period = 1;
+    int resample_period = 10;
     int resample_counter = 0;
 
     glEnable(GL_BLEND);
@@ -181,19 +186,6 @@ int main()
         canvas.pos = (canvas.pos - center) * scale + center;
     };
 
-    const auto add_water = [&](const glm::vec2& pos) {
-        glBegin(GL_TRIANGLE_FAN);
-        for (int i = 0; i < vertices; i++) {
-            const float angle = i * 2.0f * glm::pi<float>() / vertices;
-            const glm::vec2 dir = glm::vec2(std::cos(angle), std::sin(angle));
-            const glm::vec2 point = pos + (float)brush_size * dir;
-            const glm::vec2 point_proj = canvas.proj * glm::vec4(point, 0.0f, 1.0f);
-            glColor4f(dir.x, dir.y, 0.0f, 1.0f);
-            glVertex2f(point_proj.x, point_proj.y);
-        }
-        glEnd();
-    };
-
     // Callbacks
     window.registerKeyCallback([&](const int key, const int scancode, const int action, const int mods) {
         // Hold Ctrl
@@ -208,9 +200,15 @@ int main()
         if (key == GLFW_KEY_N && ctrl && action == GLFW_PRESS)
             show_new_canvas_window = true;
 
-        // Ctrl+S: Save canvas
-        if (key == GLFW_KEY_S && ctrl && action == GLFW_PRESS)
-            show_save_canvas_window = true;
+        if (key == GLFW_KEY_S && action == GLFW_PRESS) {
+            // Ctrl+S: Save canvas
+            if(ctrl)
+                show_save_canvas_window = true;
+            else
+                // Press S to force boundary resampling
+                for (auto& splat : live_splats)
+                    splat.resample();
+        }
 
         // Ctrl+Z: Undo
         if (key == GLFW_KEY_Z && ctrl && action == GLFW_PRESS)
@@ -235,7 +233,7 @@ int main()
                 // Place the first stamp
                 last_stamp = canvas.canvas_coords(cursor_pos);
                 if (canvas.contains_canvas_point(last_stamp))
-                    live_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
+                    stamps[stamp_idx]->place(&live_splats, canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices);
                 undone_splats.clear();
 
                 // Bind wet map
@@ -243,7 +241,7 @@ int main()
                 glViewport(0, 0, canvas.size.x, canvas.size.y);
 
                 // Update wet map
-                add_water(last_stamp);
+                stamps[stamp_idx]->wet_canvas(canvas, last_stamp, vertices, brush_size);
 
                 // Unbind wet map
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -267,7 +265,7 @@ int main()
                 glViewport(0, 0, canvas.size.x, canvas.size.y);
 
                 // Update wet map
-                add_water(last_stamp);
+                add_water(canvas, last_stamp, vertices, brush_size);
 
                 // Unbind wet map
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -306,13 +304,16 @@ int main()
                     pos += dir;
 
                     // Update wet map
-                    add_water(pos);
+                    if (wetting)
+                        add_water(canvas, pos, vertices, brush_size);
+                    else
+                        stamps[stamp_idx]->wet_canvas(canvas, pos, vertices, brush_size);
 
                     // Place stamp
                     if (std::fmod(i, stamp_spacing) == 0.0f) {
                         last_stamp = pos;
                         if (stroke && canvas.contains_canvas_point(last_stamp))
-                            live_splats.push_back(Splat(canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices)); // TODO: use stamps instead of splats
+                            stamps[stamp_idx]->place(&live_splats, canvas, last_stamp, brush_color, brush_size, roughness, flow, stroke_id, lifetime, vertices);
                     }
                 }
 
@@ -428,7 +429,7 @@ int main()
                 ImGui::Separator();
                 ImGui::MenuItem("Show wetness", nullptr, &show_wetness);
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Darkens the canvas where there is water present");
+                    ImGui::SetTooltip("Darkens the canvas where there is water present.");
                 ImGui::MenuItem("Debug", "D", &debug);
                 ImGui::EndMenu();
             }
@@ -450,7 +451,11 @@ int main()
             {
                 // Brush settings
                 ImGui::Text("Brush");
-                ImGui::SliderInt("Size", &brush_size, 1, 50);
+                ImGui::Combo("##", &stamp_idx, stamp_names_separated_by_zeros);
+                stamps[stamp_idx]->menu();
+
+                ImGui::Separator();
+                ImGui::SliderInt("Radius", &brush_size, 1, 50);
                 ImGui::SliderFloat("Roughness", &roughness, 0.0f, 2.0f);
                 SliderPercent("Flow", &flow, 0.0f, 2.0f);
                 ImGui::SliderInt("Lifetime", &lifetime, 0, 300);
@@ -464,7 +469,7 @@ int main()
                 ImGui::SliderInt("Stamp spacing", &stamp_spacing, 1, 10);
                 ImGui::SliderInt("Drying time", &drying_time, 0, 3600);
                 ImGui::SliderInt("Resampling period", &resample_period, 0, 60);
-                ImGui::SliderFloat("Unfixing strength", &unfixing_strength, 0.0f, 1.0f);
+                SliderPercent("Unfixing strength", &unfixing_strength, 0.0f, 1.0f);
 
                 // Debug info
                 if (debug) {
@@ -538,7 +543,7 @@ int main()
         const auto draw_splat = [&](const Splat& splat, bool draw_to_window = true) {
             if (draw_to_window && debug) {
                 // Debug vertices
-                glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
+                glColor4f(splat.color.r, splat.color.g, splat.color.b, splat.color.a);
                 glBegin(GL_TRIANGLE_FAN);
 
                 for (int i = 0; i <= splat.vertices.size(); i++) {
@@ -578,7 +583,7 @@ int main()
 
                 // Second pass: draw quad to color buffer, clear stencil buffer
                 glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-                glColor4f(splat.color.r, splat.color.g, splat.color.b, 0.1f);
+                glColor4f(splat.color.r, splat.color.g, splat.color.b, splat.color.a);
                 glStencilOp(GL_ZERO, GL_ZERO, GL_ZERO);
 
                 // Draw quad around bounding box

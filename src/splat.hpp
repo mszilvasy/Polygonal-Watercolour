@@ -17,15 +17,15 @@ struct Vertex {
 struct Splat {
 
     std::vector<Vertex> vertices;
-    const glm::vec2 bias;
-    const glm::vec3 color;
+    glm::vec2 bias;
+    const glm::vec4 color;
     const float size, roughness, flow;
     const int stroke_id;
     int life;
 
-    Splat(const Canvas& canvas, const glm::vec2& pos, const glm::vec3& color, float size, float roughness, float flow, int stroke_id, int lifetime, int n_vertices)
+    Splat(const Canvas& canvas, const glm::vec2& pos, const glm::vec4& color, float size, float roughness, float flow, int stroke_id, int lifetime, int n_vertices, const glm::vec2& bias = glm::vec2(0.0f, 0.0f))
         : color(color)
-        , bias(glm::vec2(0.0f, 0.0f))
+        , bias(bias)
         , size(size)
         , roughness(roughness)
         , flow(flow)
@@ -74,11 +74,13 @@ struct Splat {
     {
         for (auto it = vertices.begin(); it != vertices.end(); it++)
             if (wet_map[4 * ((int)canvas.size.x * (int)it->pos.y + (int)it->pos.x) + 3] == 1.0f) {
+                // Rewet splat
                 for (auto it = vertices.begin(); it != vertices.end(); it++) {
                     it->vel = glm::vec2(0.0f, 0.0f);
                     it->rewetted = U(0.0f, 1.0f) < std::powf(unfixing_strength, -life / 10.0f);
                     it->flowing = wet_map[4 * ((int)canvas.size.x * (int)it->pos.y + (int)it->pos.x) + 3] == 1.0f;
                 }
+                bias = glm::vec2(0.0f, 0.0f);
                 life = new_lifetime - 1;
                 return;
             }
