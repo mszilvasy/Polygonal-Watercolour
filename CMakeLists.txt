@@ -27,35 +27,3 @@ find_package(OpenMP)
 if(OpenMP_CXX_FOUND) 
     target_link_libraries(${MAIN_EXE_NAME} PRIVATE OpenMP::OpenMP_CXX)
 endif()
-
-# SET cwd for the MSVS debugger: https://stackoverflow.com/questions/41864259/how-to-set-working-directory-for-visual-studio-2017-rc-cmake-project
-# set (VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}) 
-set_target_properties(
-    ${MAIN_EXE_NAME} PROPERTIES
-    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-
-# # Copy all files in the resources folder to the build directory after every successful build.
-# add_custom_command(TARGET ${MAIN_EXE_NAME} POST_BUILD
-# 	COMMAND ${CMAKE_COMMAND} -E copy_directory
-# 	"${CMAKE_CURRENT_LIST_DIR}/data" $<TARGET_FILE_DIR:${MAIN_EXE_NAME}>/data)
- 
-# Preprocessor definitions for path.
-target_compile_definitions(${MAIN_EXE_NAME} PRIVATE "-DMODELS_DIR=\"${CMAKE_CURRENT_LIST_DIR}/models/\"")
-
-set(shader_copies "")
-# List all *.glsl files in the shaders folder
-file(GLOB shader_sources "${CMAKE_CURRENT_LIST_DIR}/shaders/*.glsl")
-foreach (shader_file IN LISTS shader_sources)
-	get_filename_component(file_name ${shader_file} NAME)
-	message("shader_file: ${file_name}")
-	add_custom_command(
-		OUTPUT "${CMAKE_BINARY_DIR}/shaders/${file_name}"
-		COMMAND ${CMAKE_COMMAND} -E copy
-		"${CMAKE_CURRENT_LIST_DIR}/shaders/${file_name}"
-		"${CMAKE_BINARY_DIR}/shaders/${file_name}"
-		DEPENDS "${CMAKE_CURRENT_LIST_DIR}/shaders/${file_name}"
-		)
-	LIST(APPEND shader_copies "${CMAKE_BINARY_DIR}/shaders/${file_name}")
-endforeach()
-add_custom_target(copy_shaders DEPENDS ${shader_copies})
-add_dependencies(${MAIN_EXE_NAME} copy_shaders)

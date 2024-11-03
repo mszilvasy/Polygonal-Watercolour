@@ -13,14 +13,8 @@ add_subdirectory("third_party")
 
 # find_package(Threads REQUIRED) # For TBB
 add_library(CGFramework STATIC
-	"include/framework/imconfig.h"
-	"include/framework/imgui.h"
-	"include/framework/imgui_internal.h"
 	"include/framework/opengl_includes.h"
-	"include/framework/screen.h"
 	"src/image.cpp"
-	"src/imgui.cpp"
-	"src/screen.cpp"
 	"src/window.cpp")
 target_include_directories(CGFramework PRIVATE "include/framework/" PUBLIC "include/")
 
