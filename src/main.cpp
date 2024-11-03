@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <imgui/imgui.h>
 #include <nativefiledialog/nfd.h>
+#include <stb/stb_image.h>
 #include <stb/stb_image_write.h>
 
 #include "canvas.hpp"
@@ -13,7 +14,7 @@
 
 const glm::ivec2 workspace_offset { 300, 0 };
 
-const std::vector<float> zoom_steps = { 0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f };
+const std::array zoom_steps = { 0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f };
 
 enum class DebugMode {
     Fill,
@@ -141,6 +142,33 @@ int main()
         wet_map_data = new float[4 * canvas.size.x * canvas.size.y];
     };
 
+    const auto open_canvas = [&]() {
+        nfdchar_t* p_out_path = nullptr;
+        nfdresult_t result = NFD_OpenDialog("png", nullptr, &p_out_path);
+        if (result == NFD_OKAY) {
+
+            std::filesystem::path out_path{ p_out_path };
+            out_path.replace_extension(".png");
+
+            int width, height, channels;
+            unsigned char* data = stbi_load(out_path.string().c_str(), &width, &height, &channels, 3);
+
+
+            if (data) {
+                // Flip the image vertically
+                for (int i = 0; i < height / 2; i++)
+                    for (int j = 0; j < width * 3; j++)
+                        std::swap(data[i * width * 3 + j], data[(height - i - 1) * width * 3 + j]);
+
+                new_canvas(glm::ivec2(width, height), glm::vec3(0.0f));
+                glBindTexture(GL_TEXTURE_2D, bg);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, data);
+                stbi_image_free(data);
+            }
+        }
+        free(p_out_path);
+    };
+
     const auto save_canvas = [&]() {
         nfdchar_t* p_out_path = nullptr;
         nfdresult_t result = NFD_SaveDialog("png", nullptr, &p_out_path);
@@ -209,6 +237,10 @@ int main()
         // Ctrl+N: New canvas
         if (key == GLFW_KEY_N && ctrl && action == GLFW_PRESS)
             show_new_canvas_window = true;
+
+        // Ctrl+O: Open canvas
+        if (key == GLFW_KEY_O && ctrl && action == GLFW_PRESS)
+            open_canvas();
 
         if (key == GLFW_KEY_S && action == GLFW_PRESS) {
             // Ctrl+S: Save canvas
@@ -427,6 +459,8 @@ int main()
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("New", "Ctrl+N", nullptr))
                     show_new_canvas_window = true;
+                if (ImGui::MenuItem("Open", "Ctrl+O", nullptr))
+                    open_canvas();
                 if (ImGui::MenuItem("Save", "Ctrl+S", nullptr))
                     show_save_canvas_window = true;
                 ImGui::EndMenu();
