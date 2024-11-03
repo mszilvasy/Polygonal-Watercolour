@@ -1,5 +1,5 @@
 const float alpha = 0.33f;
-const glm::vec2 g = glm::vec2(0.0f, 0.0f);
+const glm::vec2 g = glm::vec2(0.0f, -1.0f);
 
 // Random sample helper
 float U(float a, float b)
@@ -41,7 +41,7 @@ struct Splat {
     }
 
     // Advect each vertex and update the lifetime of the splat
-    bool advect(const Canvas& canvas, float* wet_map)
+    bool advect(const Canvas& canvas, float* wet_map, float gravity)
     {
         // d = (1 - alpha) * b + alpha * (1 / U(1, 1 + r)) * v
         // x* = x_t + f * d + g + U(-r, r)
@@ -59,7 +59,7 @@ struct Splat {
 
             if (it->flowing) {
                 const glm::vec2 d = (1.0f - alpha) * bias + alpha * (1.0f / U(1.0f, 1.0f + roughness)) * it->vel;
-                const glm::vec2 x_star = canvas.clamp_canvas_point(it->pos + flow * d + g + glm::vec2(U(-roughness, roughness), U(-roughness, roughness)));
+                const glm::vec2 x_star = canvas.clamp_canvas_point(it->pos + flow * d + gravity * g + glm::vec2(U(-roughness, roughness), U(-roughness, roughness)));
                 const glm::ivec2 x_star_i = glm::ivec2(x_star);
                 if (wet_map[4 * ((int)canvas.size.x * x_star_i.y + x_star_i.x) + 3] > 0.0f)
                     it->pos = x_star;

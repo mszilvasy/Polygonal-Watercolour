@@ -41,11 +41,12 @@ int main()
     int brush_size = 10;
     float roughness = 1;
     float flow = 1.0f;
-    int lifetime = 60;
     int vertices = 25;
-    
-    float unfixing_strength = 1.0f;
     int stamp_spacing = 5.0f;
+    int lifetime = 60;
+
+    float gravity = 0.0f;
+    float unfixing_strength = 1.0f;
     int drying_time = 600;
 
     bool ctrl = false;
@@ -66,7 +67,8 @@ int main()
     std::list<Splat> live_splats = {};
     std::deque<Splat> undone_splats = {};
 
-    float time_step = 0.0167f; // Roughly corresponds to 60 fps
+    int tps = 60;
+    int saved_tps = tps;
     float time_accum = 0.0f;
     int resample_period = 10;
     int resample_counter = 0;
@@ -186,6 +188,14 @@ int main()
         canvas.pos = (canvas.pos - center) * scale + center;
     };
 
+    const auto pause = [&]() {
+        if (tps > 0) {
+            saved_tps = tps;
+            tps = 0;
+        } else
+            tps = saved_tps;
+    };
+
     // Callbacks
     window.registerKeyCallback([&](const int key, const int scancode, const int action, const int mods) {
         // Hold Ctrl
@@ -202,7 +212,7 @@ int main()
 
         if (key == GLFW_KEY_S && action == GLFW_PRESS) {
             // Ctrl+S: Save canvas
-            if(ctrl)
+            if (ctrl)
                 show_save_canvas_window = true;
             else
                 // Press S to force boundary resampling
@@ -217,6 +227,10 @@ int main()
         // Ctrl+Y: Redo
         if (key == GLFW_KEY_Y && ctrl && action == GLFW_PRESS)
             redo();
+
+        // Pause
+        if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
+            pause();
 
         // Toggle debug info
         if (key == GLFW_KEY_D && action == GLFW_PRESS)
@@ -356,49 +370,54 @@ int main()
 
         // Calculate time delta
         const auto new_t = std::chrono::system_clock::now();
-        const float dt = std::chrono::duration<float>(new_t - t).count();
-        time_accum += dt;
-        t = new_t;
 
         // Time step
-        while (time_accum >= time_step) {
-            time_accum -= time_step;
-            fps = 1.0f / dt;
+        if (tps > 0) {
 
-            glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
-            glViewport(0, 0, canvas.size.x, canvas.size.y);
+            const float dt = std::chrono::duration<float>(new_t - t).count();
+            time_accum += dt;
 
-            glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGBA, GL_FLOAT, wet_map_data);
-            for (auto it = live_splats.begin(); it != live_splats.end(); it++) {
-                if (it->life >= 0) {
-                    // Advect flowing splats
-                    if ((it->advect(canvas, wet_map_data) || resample_counter == resample_period) && resample_period > 0)
-                        it->resample(); // Resample boundary periodically or when a splat becomes fixed
-                } else if (it->life >= -drying_time)
-                    // Age fixed splats
-                    it->age(canvas, wet_map_data, lifetime, unfixing_strength);
+            const float time_step = 1.0f / tps;
+            while (time_accum >= time_step) {
+                time_accum -= time_step;
+                fps = 1.0f / dt;
+
+                glBindFramebuffer(GL_FRAMEBUFFER, wet_map_fbo);
+                glViewport(0, 0, canvas.size.x, canvas.size.y);
+
+                glReadPixels(0, 0, canvas.size.x, canvas.size.y, GL_RGBA, GL_FLOAT, wet_map_data);
+                for (auto it = live_splats.begin(); it != live_splats.end(); it++) {
+                    if (it->life >= 0) {
+                        // Advect flowing splats
+                        if ((it->advect(canvas, wet_map_data, gravity) || resample_counter == resample_period) && resample_period > 0)
+                            it->resample(); // Resample boundary periodically or when a splat becomes fixed
+                    } else if (it->life >= -drying_time)
+                        // Age fixed splats
+                        it->age(canvas, wet_map_data, lifetime, unfixing_strength);
+                }
+
+                if (resample_period > 0)
+                    resample_counter = resample_counter % resample_period + 1;
+
+                // Reduce wetness
+                glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
+                glBlendFunc(GL_ONE, GL_ONE);
+
+                glColor4f(0.0f, 0.0f, 0.0f, 0.005f);
+                glBegin(GL_QUADS);
+                glVertex2f(-1.0f, -1.0f);
+                glVertex2f(1.0f, -1.0f);
+                glVertex2f(1.0f, 1.0f);
+                glVertex2f(-1.0f, 1.0f);
+                glEnd();
+
+                glBlendEquation(GL_FUNC_ADD);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
-
-            if (resample_period > 0)
-                resample_counter = resample_counter % resample_period + 1;
-
-            // Reduce wetness
-            glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
-            glBlendFunc(GL_ONE, GL_ONE);
-
-            glColor4f(0.0f, 0.0f, 0.0f, 0.005f);
-            glBegin(GL_QUADS);
-            glVertex2f(-1.0f, -1.0f);
-            glVertex2f(1.0f, -1.0f);
-            glVertex2f(1.0f, 1.0f);
-            glVertex2f(-1.0f, 1.0f);
-            glEnd();
-
-            glBlendEquation(GL_FUNC_ADD);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
+        t = new_t;
         window.updateInput();
 
         // GUI
@@ -413,6 +432,16 @@ int main()
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem(tps > 0 ? "Pause" : "Unpause", "Space", nullptr))
+                    pause();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(tps > 0 ? "Pause the simulation." : "Unpause the simulation.");
+                if (ImGui::MenuItem("Force resample", "S", nullptr))
+                    for (auto& splat : live_splats)
+                        splat.resample();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Force the splat boundary resampling step.");
+                ImGui::Separator();
                 if (ImGui::MenuItem("Undo", "Ctrl+Z", nullptr, live_splats.size() > 0))
                     undo();
                 if (ImGui::MenuItem("Redo", "Ctrl+Y", nullptr, undone_splats.size() > 0))
@@ -422,6 +451,8 @@ int main()
             if (ImGui::BeginMenu("View")) {
                 if (ImGui::MenuItem("Centre canvas", nullptr, nullptr))
                     canvas.pos = (glm::vec2(workspace_size) - canvas.zoom * canvas.size) / 2.0f + glm::vec2(workspace_offset);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("The canvas can be panned using the middle mouse button.");
                 if (ImGui::MenuItem("Zoom in", nullptr, nullptr, zoom_idx < zoom_steps.size() - 1))
                     zoom(true, workspace_size / 2 + workspace_offset);
                 if (ImGui::MenuItem("Zoom out", nullptr, nullptr, zoom_idx > 0))
@@ -457,19 +488,39 @@ int main()
                 ImGui::Separator();
                 ImGui::SliderInt("Radius", &brush_size, 1, 50);
                 ImGui::SliderFloat("Roughness", &roughness, 0.0f, 2.0f);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Affects the degree of random movement allowed by vertices.");
                 SliderPercent("Flow", &flow, 0.0f, 2.0f);
-                ImGui::SliderInt("Lifetime", &lifetime, 0, 300);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Affects the rate of pigment flow.");
                 ImGui::SliderInt("Vertices", &vertices, 6, 50);
+                ImGui::SliderInt("Spacing", &stamp_spacing, 1, 10);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Spacing between stamps in a stroke.");
+                ImGui::SliderInt("Lifetime", &lifetime, 0, 300);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Flowing time in ticks.");
                 ImGui::Separator();
                 ImGui::ColorPicker3("Colour", &brush_color.r);
 
                 // Simulation settings
                 ImGui::Separator();
                 ImGui::Text("Canvas");
-                ImGui::SliderInt("Stamp spacing", &stamp_spacing, 1, 10);
+                ImGui::SliderInt("TPS", &tps, 0, 120);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Simulation speed in ticks-per-second.");
+                ImGui::SliderFloat("Gravity", &gravity, 0.0f, 1.0f);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Strength of the global gravity vector.");
                 ImGui::SliderInt("Drying time", &drying_time, 0, 3600);
-                ImGui::SliderInt("Resampling period", &resample_period, 0, 60);
-                SliderPercent("Unfixing strength", &unfixing_strength, 0.0f, 1.0f);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Drying time in ticks.\nSplats which have been fixed for this long will be dried.");
+                ImGui::SliderInt("Resample pd", &resample_period, 0, 60);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Period between splat boundary resampling steps in ticks.\nSet to 0 to disable.");
+                SliderPercent("Unfixing", &unfixing_strength, 0.0f, 1.0f);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Strength of the unfixing property of water:\nProbability that a vertex becomes unfixed when rewetted.");
 
                 // Debug info
                 if (debug) {
