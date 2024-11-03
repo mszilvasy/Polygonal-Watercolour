@@ -8,7 +8,7 @@ void add_water(const Canvas& canvas, const glm::vec2& pos, int vertices, float r
         const glm::vec2 dir = glm::vec2(std::cos(angle), std::sin(angle));
         const glm::vec2 point = pos + r * dir;
         const glm::vec2 point_proj = canvas.proj * glm::vec4(point, 0.0f, 1.0f);
-        glColor4f(dir.x, dir.y, 0.0f, 1.0f);
+        glColor4f((dir.x + 1.0f) / 2.0f, (dir.y + 1.0f) / 2.0f, 0.0f, 1.0f);
         glVertex2f(point_proj.x, point_proj.y);
     }
     glEnd();

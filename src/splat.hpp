@@ -7,6 +7,12 @@ float U(float a, float b)
     return a + (b - a) * rand() / RAND_MAX;
 }
 
+// Wet map helper
+float convert(float x)
+{
+    return 2.0f * x - 1.0f;
+}
+
 struct Vertex {
     glm::vec2 pos;
     glm::vec2 vel;
@@ -51,8 +57,8 @@ struct Splat {
 
             if (it->rewetted) { // Rewetted vertices have their velocity sampled from the wet map
                 it->vel = glm::vec2(
-                    wet_map[4 * ((int)canvas.size.x * (int)it->pos.y + (int)it->pos.x) + 0],
-                    wet_map[4 * ((int)canvas.size.x * (int)it->pos.y + (int)it->pos.x) + 1]);
+                    convert(wet_map[4 * ((int)canvas.size.x * (int)it->pos.y + (int)it->pos.x) + 0]),
+                    convert(wet_map[4 * ((int)canvas.size.x * (int)it->pos.y + (int)it->pos.x) + 1]));
                 if (!it->flowing && wet_map[4 * ((int)canvas.size.x * (int)it->pos.y + (int)it->pos.x) + 3] == 1.0f)
                     it->flowing = true;
             }
